@@ -1,4 +1,4 @@
-// Snapshot → per-slot visual targets, and the tween between two target sets.
+// Snapshot → per-slot visual targets, and blending between two target sets.
 //
 // Each slot holds STRIDE floats: [height, footprint, r, g, b] in linear RGB.
 // height == 0 means "no file here at this moment".
@@ -9,7 +9,6 @@ import { CELL, type Layout } from './layout'
 import { langColor } from './palette'
 
 export const STRIDE = 5
-export const TRANSITION_MS = 300
 
 const HEIGHT_SCALE = 0.9
 const MAX_HEIGHT = 10
@@ -17,8 +16,13 @@ const MIN_HEIGHT = 0.08
 const FOOTPRINT_MIN = 0.42
 const FOOTPRINT_SPAN = 0.4
 const FOOTPRINT_REF = Math.log1p(20000)
-// Vanishing blocks darken towards the ground while they shrink.
-const FADE_OUT_COLOR = 0.15
+
+/**
+ * Peak delay as a fraction of the segment. Blocks further from the centre start
+ * later, so a commit reads as a ripple across the city rather than every tower
+ * snapping in the same frame.
+ */
+const STAGGER_SPAN = 0.55
 
 export function heightFor(lines: number): number {
   if (lines <= 0) return MIN_HEIGHT
@@ -57,55 +61,71 @@ export function buildTargets(layout: Layout, snapshot: Snapshot, out: Float32Arr
   return out
 }
 
-const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)
+function hash01(s: string): number {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return ((h >>> 0) % 1024) / 1024
+}
+
+/**
+ * Per-slot normalised delay in [0, STAGGER_SPAN). Mostly radial so the wave rolls
+ * outward from the middle of the city, plus a per-path jitter so the wave front
+ * is not a perfect ring.
+ */
+export function buildStagger(layout: Layout, out: Float32Array): Float32Array {
+  const n = layout.paths.length
+  const maxR = Math.max(1e-6, Math.hypot(layout.halfWidth, layout.halfDepth))
+  for (let i = 0; i < n; i++) {
+    const r = Math.min(1, Math.hypot(layout.x[i], layout.z[i]) / maxR)
+    out[i] = STAGGER_SPAN * Math.min(1, 0.76 * r ** 0.65 + 0.24 * hash01(layout.paths[i]))
+  }
+  return out
+}
+
+/** C1 ease-out; zero slope at both ends. */
+const smoothstep = (t: number) => t * t * (3 - 2 * t)
+
+/**
+ * Near-linear: the slope at t=0 equals the slope at t=1, so motion carries
+ * across commit boundaries instead of stalling at every one.
+ */
+const FLOW_MIX = 0.32
+const flow = (t: number) => t + (smoothstep(t) - t) * FLOW_MIX
 
 export class Morph {
   readonly current: Float32Array
-  private readonly from: Float32Array
-  private readonly to: Float32Array
-  private start = 0
-  private duration = TRANSITION_MS
-  private active = false
+  private readonly stagger: Float32Array
 
-  constructor(slots: number) {
+  constructor(slots: number, stagger: Float32Array) {
     this.current = new Float32Array(slots * STRIDE)
-    this.from = new Float32Array(slots * STRIDE)
-    this.to = new Float32Array(slots * STRIDE)
+    this.stagger = stagger
   }
 
   /**
-   * Starts a transition from whatever is on screen right now, so retargeting
-   * mid-flight (fast scrubbing) never jumps.
+   * Writes a fractional position between two target sets straight into
+   * `current`. There is no internal tween: the caller owns the clock, so a
+   * playhead can be parked at 0.37 while playback stays in motion, and neither
+   * path dead-ends waiting for the other.
+   *
+   * `staggered` spreads the segment across the city for playback; when false the
+   * fraction is applied exactly, which is what a parked playhead needs.
    */
-  retarget(target: Float32Array, now: number, duration = TRANSITION_MS): void {
-    const { from, to, current } = this
-    from.set(current)
-    to.set(target)
-    for (let o = 0; o < to.length; o += STRIDE) {
-      if (to[o] === 0) {
-        to[o + 2] = from[o + 2] * FADE_OUT_COLOR
-        to[o + 3] = from[o + 3] * FADE_OUT_COLOR
-        to[o + 4] = from[o + 4] * FADE_OUT_COLOR
-      } else if (from[o] === 0) {
-        // Appearing blocks rise out of dark ground rather than from black-on-nothing.
-        from[o + 2] = to[o + 2] * FADE_OUT_COLOR
-        from[o + 3] = to[o + 3] * FADE_OUT_COLOR
-        from[o + 4] = to[o + 4] * FADE_OUT_COLOR
+  blend(a: Float32Array, b: Float32Array, f: number, staggered: boolean): void {
+    const { current, stagger } = this
+    const t0 = f < 0 ? 0 : f > 1 ? 1 : f
+    for (let i = 0, s = 0; i < current.length; i += STRIDE, s++) {
+      let e = t0
+      if (staggered) {
+        const d = stagger[s]
+        e = flow(t0 <= d ? 0 : (t0 - d) / (1 - d))
+      }
+      for (let k = 0; k < STRIDE; k++) {
+        const av = a[i + k]
+        current[i + k] = av + (b[i + k] - av) * e
       }
     }
-    this.start = now
-    this.duration = Math.max(1, duration)
-    this.active = true
-  }
-
-  /** Advances the tween; returns true when `current` changed this frame. */
-  step(now: number): boolean {
-    if (!this.active) return false
-    const t = Math.min(1, Math.max(0, (now - this.start) / this.duration))
-    const e = easeOutCubic(t)
-    const { from, to, current } = this
-    for (let i = 0; i < current.length; i++) current[i] = from[i] + (to[i] - from[i]) * e
-    if (t >= 1) this.active = false
-    return true
   }
 }

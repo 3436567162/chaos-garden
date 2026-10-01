@@ -156,6 +156,8 @@ export class CityScene {
   private field: BlockField | null = null
   private readonly resizeObserver: ResizeObserver
   private raf = 0
+  private lastNow = 0
+  private readonly ticks = new Set<(dt: number) => void>()
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
@@ -232,11 +234,26 @@ export class CityScene {
 
     const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop)
-      this.field?.update(now)
+      const dt = Math.min(64, now - this.lastNow)
+      this.lastNow = now
+      for (const cb of this.ticks) cb(dt)
       this.controls.update()
       this.composer.render()
     }
+    this.lastNow = performance.now()
     this.raf = requestAnimationFrame(loop)
+  }
+
+  /**
+   * Runs `cb(deltaMs)` once per rendered frame, before the scene is drawn.
+   * Playback rides this loop instead of its own timer so the city and the
+   * clock can never drift apart. Returns an unsubscribe function.
+   */
+  onTick(cb: (dt: number) => void): () => void {
+    this.ticks.add(cb)
+    return () => {
+      this.ticks.delete(cb)
+    }
   }
 
   setLayout(layout: Layout): void {
@@ -280,8 +297,9 @@ export class CityScene {
     this.frame(radius)
   }
 
-  show(snapshot: Snapshot, duration?: number): void {
-    this.field?.show(snapshot, performance.now(), duration)
+  /** Renders the exact fractional position between two snapshots. */
+showAt(from: Snapshot, to: Snapshot, fraction: number, staggered: boolean): void {
+    this.field?.showAt(from, to, fraction, staggered)
   }
 
   private frame(radius: number): void {

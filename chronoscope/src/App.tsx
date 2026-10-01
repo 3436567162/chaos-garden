@@ -6,7 +6,6 @@ import { Timeline } from './components/Timeline'
 import { buildMockTimeline } from './mock'
 import { CityScene } from './three/CityScene'
 import { computeLayout } from './three/layout'
-import { TRANSITION_MS } from './three/morph'
 
 export default function App() {
   const timeline = useMemo(buildMockTimeline, [])
@@ -22,19 +21,32 @@ export default function App() {
 
   const stageRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<CityScene | null>(null)
+  /**
+   * The scene only exists after mount, and child effects run before parent
+   * ones — so the timeline's subscription has to be able to re-run once the
+   * scene shows up, otherwise it silently receives no frames at all.
+   */
+  const [scene, setScene] = useState<CityScene | null>(null)
 
-  const stepMs = BASE_STEP_MS / speed
-  // At high speeds the morph must finish before the next commit arrives.
-  const transitionMs = playing ? Math.min(TRANSITION_MS, stepMs * 0.8) : TRANSITION_MS
-  const transitionRef = useRef(transitionMs)
-  transitionRef.current = transitionMs
+  /**
+   * Playback position is a continuous coordinate in snapshot space, not a commit
+   * counter: 3.5 means "halfway between commit 3 and commit 4". Both the 3D city
+   * and the timeline playhead read from it, so a drag can park anywhere and
+   * playback can stay in motion without either one snapping.
+   */
+  const posRef = useRef(count - 1)
+  /** Commit the 3D is heading toward; changes at most once per commit. */
+  const shownRef = useRef(count - 1)
+  /** Authoritative play state, set synchronously so the frame tick never races a click. */
+  const playingRef = useRef(false)
 
   useEffect(() => {
-    const scene = new CityScene(stageRef.current!)
-    sceneRef.current = scene
+    const created = new CityScene(stageRef.current!)
+    sceneRef.current = created
+    setScene(created)
     return () => {
-      scene.dispose()
-      sceneRef.current = null
+      created.dispose()
+      if (sceneRef.current === created) sceneRef.current = null
     }
   }, [])
 
@@ -42,29 +54,85 @@ export default function App() {
     sceneRef.current?.setLayout(layout)
   }, [layout])
 
+  /** Draws whatever `posRef` currently points at. */
+  const renderAt = useCallback(
+    (pos: number, staggered: boolean) => {
+      const scene = sceneRef.current
+      const snaps = timeline.snapshots
+      if (!scene || snaps.length === 0) return
+      const lastIdx = snaps.length - 1
+      const lo = Math.min(lastIdx, Math.max(0, Math.floor(pos)))
+      const hi = Math.min(lastIdx, lo + 1)
+      scene.showAt(snaps[lo], snaps[hi], pos - lo, staggered)
+    },
+    [timeline.snapshots]
+  )
+
+  // Covers first paint and layout rebuilds; scrubbing renders directly.
   useEffect(() => {
-    sceneRef.current?.show(snapshot, transitionRef.current)
-  }, [snapshot, layout])
+    if (playingRef.current) return
+    renderAt(posRef.current, false)
+  }, [renderAt, layout, index])
 
   useEffect(() => {
-    if (!playing) return
-    if (index >= count - 1) {
+    if (!playing || !scene) return
+    const lastIdx = count - 1
+    const unsub = scene.onTick(dt => {
+      const pos = posRef.current + (dt / BASE_STEP_MS) * speed
+      posRef.current = pos
+      if (pos >= lastIdx) {
+        posRef.current = lastIdx
+        playingRef.current = false
+        setPlaying(false)
+      }
+      renderAt(posRef.current, true)
+      const i = Math.min(lastIdx, Math.floor(posRef.current))
+      if (i !== shownRef.current) {
+        shownRef.current = i
+        setIndex(i)
+      }
+    })
+    return () => unsub?.()
+  }, [playing, speed, count, renderAt, scene])
+
+  // Stable handle so the timeline can subscribe to the render loop without
+  // resubscribing on every React render; it changes only when the scene is
+  // created or destroyed.
+  const subscribeFrames = useCallback(
+    (cb: (dt: number) => void) => (scene ? scene.onTick(cb) : () => {}),
+    [scene]
+  )
+
+  const togglePlay = useCallback(() => {
+    if (playingRef.current) {
+      playingRef.current = false
       setPlaying(false)
       return
     }
-    const id = window.setTimeout(() => setIndex(i => Math.min(count - 1, i + 1)), stepMs)
-    return () => window.clearTimeout(id)
-  }, [playing, index, count, stepMs])
+    if (posRef.current >= count - 1) {
+      posRef.current = 0
+      shownRef.current = 0
+      setIndex(0)
+      renderAt(0, false)
+    }
+    playingRef.current = true
+    setPlaying(true)
+  }, [count, renderAt])
 
-  const togglePlay = useCallback(() => {
-    if (!playing && index >= count - 1) setIndex(0)
-    setPlaying(!playing)
-  }, [playing, index, count])
-
-  const scrub = useCallback((i: number) => {
-    setPlaying(false)
-    setIndex(i)
-  }, [])
+  /** Parks the playhead at any fractional position and stops playback. */
+  const scrub = useCallback(
+    (pos: number) => {
+      playingRef.current = false
+      setPlaying(false)
+      const clamped = Math.max(0, Math.min(count - 1, pos))
+      posRef.current = clamped
+      const i = Math.floor(clamped)
+      shownRef.current = i
+      setIndex(i)
+      renderAt(clamped, false)
+    },
+    [count, renderAt]
+  )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -89,6 +157,8 @@ export default function App() {
       <Timeline
         snapshots={timeline.snapshots}
         index={index}
+        positionRef={posRef}
+        subscribe={subscribeFrames}
         onChange={scrub}
         controls={<Playback playing={playing} speed={speed} onToggle={togglePlay} onSpeed={setSpeed} />}
       />

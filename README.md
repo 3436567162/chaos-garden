@@ -195,7 +195,8 @@ npm run tauri build    # 构建当前平台安装包
 | ContributorRank | **GLM-5.3 flash** | 主要产出：工程脚手架、前后端实现、UI 与交互 |
 | ContributorRank | **GLM-5.3** | 算法设计：多平台数据聚合、身份归并、归一化加权评分模型 |
 | house_game | **Claude Opus 5.5** | 全部产出：场景架构、程序化几何、着色器、交互系统、模块拆分 |
-| chronoscope | **Claude Fable 5** | 全部产出：工程脚手架、稳定布局算法、InstancedMesh 渲染与过渡、视觉设计、时间轴与自动播放 |
+| chronoscope | **Claude Fable 5** | 主体产出：工程脚手架、稳定布局算法、InstancedMesh 渲染、视觉设计、时间轴与自动播放 |
+| chronoscope | **space bunny** | 动效重构：连续播放时钟、径向错峰与速度连续缓动、时间轴命令式渲染、任意位置停靠 |
 
 <details>
 <summary><b>分工说明</b></summary>
@@ -204,7 +205,7 @@ npm run tauri build    # 构建当前平台安装包
 
 禅庭场景（`house_game`）由 **Claude Opus 5.5** 独立完成，涵盖砂纹高度图算法、破面屋顶曲面、龙的脊线扫掠、四季环境插值与积雪 shader patch 等全部实现。
 
-代码城市（`chronoscope`）由 **Claude Fable 5** 独立完成，涵盖 Tauri 工程搭建、路径到网格的稳定布局、单 InstancedMesh 渲染与可打断过渡、暮色主题视觉与自动播放。
+代码城市（`chronoscope`）的骨架与渲染由 **Claude Fable 5** 完成，涵盖 Tauri 工程搭建、路径到网格的稳定布局、单 InstancedMesh 渲染与暮色主题视觉。随后由 **space bunny** 重构了动效层：把播放位置从整数 commit 索引改成连续坐标，重写 Morph 为外部时钟驱动的混合而非内部补间，并让时间轴改为命令式渲染，从而支持涟漪式错峰过渡和任意位置停靠。
 
 </details>
 
