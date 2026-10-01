@@ -190,6 +190,25 @@ export class History {
     return out
   }
 
+  /**
+   * Slots whose content differs between two samples — the suspects when a
+   * bisect lands on a culprit. One pass over the two rows.
+   */
+  changedBetween(lo: number, hi: number): number[] {
+    if (lo === hi) return []
+    const a = Math.min(lo, hi) * this.slots
+    const b = Math.max(lo, hi) * this.slots
+    const out: number[] = []
+    for (let i = 0; i < this.slots; i++) {
+      const lineA = this.lines[a + i]
+      const langA = this.langs[a + i]
+      const lineB = this.lines[b + i]
+      const langB = this.langs[b + i]
+      if (lineA !== lineB || langA !== langB) out.push(i)
+    }
+    return out
+  }
+
   /** Samples whose commit message contains `needle`, case-insensitively. */
   search(needle: string): number[] {
     const q = needle.trim().toLowerCase();

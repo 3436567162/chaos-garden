@@ -30,7 +30,9 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import type { History } from '../history'
 import { BlockField } from './BlockField'
+import { Highlight } from './Highlight'
 import { CELL, type Layout } from './layout'
+import { STRIDE } from './morph'
 import {
   FOG_COLOR,
   GRID_MAJOR,
@@ -228,6 +230,8 @@ export class CityScene {
   private grid: LineSegments | null = null
   private outline: LineSegments | null = null
   private field: BlockField | null = null
+  private readonly highlight = new Highlight()
+  private highlightBuffer: Float32Array | null = null
   private readonly resizeObserver: ResizeObserver
   private raf = 0
   private lastNow = 0
@@ -338,6 +342,7 @@ const dt = Math.min(64, now - this.lastNow)
       this.lastNow = now
       for (const cb of this.ticks) cb(dt)
       this.pick()
+      this.highlight.update(dt / 1000)
       this.controls.update()
       this.renderer.info.reset()
       this.composer.render()
@@ -545,9 +550,27 @@ const dt = Math.min(64, now - this.lastNow)
     this.frame(radius)
   }
 
-  /** Renders the exact fractional position between two sample rows. */
+/** Renders the exact fractional position between two sample rows. */
 showAt(history: History, lo: number, hi: number, fraction: number, staggered: boolean): void {
     this.field?.showAt(history, lo, hi, fraction, staggered)
+  }
+
+  /**
+   * Rings the given slots with a pulsing shell. Used by bisect to mark the files
+   * that differ between the last good and first bad stop. Heights come from
+   * `row`, so the shell matches the state the user is looking at.
+   */
+  setHighlight(history: History, slots: number[], row: number): void {
+    if (!this.field || slots.length === 0) {
+      this.highlight.clear()
+      return
+    }
+    if (!this.highlightBuffer || this.highlightBuffer.length !== this.field.mesh.count * STRIDE) {
+      this.highlightBuffer = new Float32Array(this.field.mesh.count * STRIDE)
+    }
+    history.targetsInto(row, this.highlightBuffer)
+    const heights = this.highlightBuffer
+    this.highlight.set(slots, this.field.layout.x, this.field.layout.z, slot => heights[slot * STRIDE])
   }
 
   private frame(radius: number): void {

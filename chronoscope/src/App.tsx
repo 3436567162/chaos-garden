@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BisectPanel, type BisectResult } from './components/BisectPanel'
 import { CommitBar } from './components/CommitBar'
 import { FilePanel } from './components/FilePanel'
 import { Legend } from './components/Legend'
@@ -41,6 +42,9 @@ export default function App() {
   const [hover, setHover] = useState<Pick | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
   const [showStats, setShowStats] = useState(stressSlots > 0)
+  const [bisectOpen, setBisectOpen] = useState(false)
+  /** Whatever the open search last reported: suspects to ring, band, culprit. */
+  const [search, setSearch] = useState<BisectResult | null>(null)
 
   // Stress mode skips the start screen entirely: there is nothing to pick.
   useEffect(() => {
@@ -159,6 +163,12 @@ export default function App() {
     return () => unsub()
   }, [scene, history, renderAt])
 
+// Ring the suspect blocks; heights come from the row currently on screen.
+  useEffect(() => {
+    if (!history) return
+    sceneRef.current?.setHighlight(history, search?.suspects ?? [], index)
+  }, [scene, history, search, index])
+
   useEffect(() => {
     if (!scene) return
     const offHover = scene.onHover(setHover)
@@ -276,8 +286,14 @@ last = now
         goTo(lastRef.current)
       } else if (e.key === 'Escape') {
         setSelected(null)
-      } else if (e.key === '`') {
+} else if (e.key === '`') {
         setShowStats(v => !v)
+      } else if (e.key === 'b' || e.key === 'B') {
+        if (!history) return
+        setBisectOpen(v => {
+          if (v) setSearch(null)
+          return !v
+        })
       }
     }
     window.addEventListener('keydown', onKey)
@@ -337,10 +353,22 @@ last = now
           >
             <Legend history={history} row={index} />
           </CommitBar>
-          <div className="stage-hint">
-            空格 播放/暂停 · ←→ 逐 commit · Home/End 首尾 · 悬停查看文件 · 点击查看修改史 · 空格外
-            单击空白取消选择
+<div className="stage-hint">
+            空格 播放/暂停 · ←→ 逐 commit · Home/End 首尾 · 悬停查看文件 · 点击查看修改史 ·
+            B 二分查找 · ` 渲染统计
           </div>
+          {bisectOpen ? (
+            <BisectPanel
+              history={history}
+              row={index}
+              onGoTo={goTo}
+              onResult={setSearch}
+              onClose={() => {
+                setBisectOpen(false)
+                setSearch(null)
+              }}
+            />
+          ) : null}
           {selected !== null ? (
             <FilePanel
               history={history}
@@ -353,7 +381,9 @@ last = now
           <Timeline
             samples={history.samples}
             totals={history.totals}
-            index={index}
+index={index}
+            band={search?.band ?? null}
+            culprit={search?.culprit ?? null}
             positionRef={posRef}
             subscribe={subscribeFrames}
             onChange={scrub}

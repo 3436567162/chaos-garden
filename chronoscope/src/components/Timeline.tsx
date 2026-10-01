@@ -16,6 +16,10 @@ interface Props {
   totals: Int32Array
   /** Integer stop index; drives the readouts and the tick highlight. */
   index: number
+  /** Candidate interval to band, while a search is running. */
+  band?: [number, number] | null
+  /** Row the search settled on. */
+  culprit?: number | null
   /** Continuous playback position. The playhead tracks this, not `index`. */
   positionRef: MutableRefObject<number>
   /** Frame subscription from the render loop; returns an unsubscribe. */
@@ -80,6 +84,8 @@ export function Timeline({
   samples,
   totals,
   index,
+  band,
+  culprit,
   positionRef,
   subscribe,
   onChange,
@@ -202,10 +208,27 @@ export function Timeline({
             style={{ height: CHART_H }}
           />
           <div className="timeline-axis">
+            {band ? (
+              <div
+                className="timeline-band"
+                style={{
+                  left: `${pctOf(band[0])}%`,
+                  width: `${pctOf(band[1]) - pctOf(band[0])}%`
+                }}
+              />
+            ) : null}
             {samples.map((s, i) => (
               <div
                 key={s.oid}
-                className={i <= index ? 'timeline-tick past' : 'timeline-tick'}
+                className={
+                  culprit === i
+                    ? 'timeline-tick culprit'
+                    : band && (i < band[0] || i > band[1])
+                      ? 'timeline-tick dropped'
+                      : i <= index
+                        ? 'timeline-tick past'
+                        : 'timeline-tick'
+                }
                 style={{ left: `${pctOf(i)}%` }}
               />
             ))}
