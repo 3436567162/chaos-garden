@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CommitBar } from './components/CommitBar'
+import { FilePanel } from './components/FilePanel'
 import { Legend } from './components/Legend'
 import { BASE_STEP_MS, Playback, type Speed } from './components/Playback'
+import { SearchBox } from './components/SearchBox'
 import { StartScreen } from './components/StartScreen'
 import { Timeline } from './components/Timeline'
+import { Tooltip } from './components/Tooltip'
 import { History } from './history'
-import {
-  errorMessage,
-  isTauri,
-  onScanProgress,
-  pickFolder,
-  scanRepository
-} from './lib'
+import { errorMessage, isTauri, onScanProgress, pickFolder, scanRepository } from './lib'
 import { buildMockScan } from './mock'
-import { CityScene } from './three/CityScene'
+import { CityScene, type Pick } from './three/CityScene'
 import type { ScanProgress } from './types'
+
+/** How long the entrance sweep takes when a repository first appears. */
+const ENTRANCE_MS = 1500
 
 export default function App() {
   const [history, setHistory] = useState<History | null>(null)
@@ -24,13 +24,14 @@ export default function App() {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<Speed>(1)
+  const [hover, setHover] = useState<Pick | null>(null)
+  const [selected, setSelected] = useState<number | null>(null)
 
   const stageRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<CityScene | null>(null)
   /**
    * The scene only exists after mount, and child effects run before parent
-   * ones, so the timeline's subscription has to be able to re-run once the
-   * scene shows up.
+   * ones, so subscriptions have to be able to re-run once the scene shows up.
    */
   const [scene, setScene] = useState<CityScene | null>(null)
 
@@ -43,6 +44,8 @@ export default function App() {
   const shownRef = useRef(0)
   /** Authoritative play state, set synchronously so a frame never races a click. */
   const playingRef = useRef(false)
+  /** Non-null while the opening sweep is playing; holds its start position. */
+  const entranceRef = useRef<{ from: number; elapsed: number } | null>(null)
 
   useEffect(() => {
     const created = new CityScene(stageRef.current!)
@@ -58,37 +61,37 @@ export default function App() {
   const last = Math.max(0, count - 1)
 
   /** Draws whatever `posRef` currently points at. */
-  const renderAt = useCallback(
-    (pos: number, staggered: boolean) => {
-      const target = sceneRef.current
-      const h = historyRef.current
-      if (!target || !h) return
-      const clamped = Math.max(0, Math.min(lastRef.current, pos))
-      const lo = Math.min(lastRef.current, Math.floor(clamped))
-      const hi = Math.min(lastRef.current, lo + 1)
-      target.showAt(h, lo, hi, clamped - lo, staggered)
-    },
-    []
-  )
+  const renderAt = useCallback((pos: number, staggered: boolean) => {
+    const target = sceneRef.current
+    const h = historyRef.current
+    if (!target || !h) return
+    const clamped = Math.max(0, Math.min(lastRef.current, pos))
+    const lo = Math.min(lastRef.current, Math.floor(clamped))
+    const hi = Math.min(lastRef.current, lo + 1)
+    target.showAt(h, lo, hi, clamped - lo, staggered)
+  }, [])
 
-  // Refs so renderAt stays stable while still seeing the current values.
+  // Refs so renderAt stays stable while still seeing current values.
   const historyRef = useRef<History | null>(null)
   historyRef.current = history
   const lastRef = useRef(last)
   lastRef.current = last
 
+  // New repository: rebuild the city, park on the last commit, then sweep in.
   useEffect(() => {
-    sceneRef.current?.setLayout(history?.layout ?? null)
-    if (history) {
-      posRef.current = last
-      shownRef.current = last
-      setIndex(last)
-      renderAt(last, false)
-    }
+    if (!history) return
+    sceneRef.current?.setLayout(history.layout)
+    setSelected(null)
+    setHover(null)
+    posRef.current = last
+    shownRef.current = last
+    setIndex(last)
+    entranceRef.current = { from: 0, elapsed: 0 }
+    renderAt(0, false)
   }, [history, last, renderAt])
 
   useEffect(() => {
-    if (!playing || !scene || !history) return
+    if (!playing || !scene || !history || entranceRef.current) return
     const unsub = scene.onTick(dt => {
       const pos = posRef.current + (dt / BASE_STEP_MS) * speed
       posRef.current = pos
@@ -107,6 +110,45 @@ export default function App() {
     return () => unsub()
   }, [playing, speed, scene, history, renderAt])
 
+  // Opening sweep: sample 0 to HEAD in one gesture, then hands over to the user.
+  useEffect(() => {
+    if (!scene || !history) return
+    const unsub = scene.onTick(dt => {
+      const run = entranceRef.current
+      if (!run) return
+      run.elapsed += dt
+      const t = Math.min(1, run.elapsed / ENTRANCE_MS)
+      // Ease out so the city decelerates into its final shape.
+      const eased = 1 - Math.pow(1 - t, 3)
+      const pos = run.from + (lastRef.current - run.from) * eased
+      posRef.current = pos
+      renderAt(pos, true)
+      const i = Math.min(lastRef.current, Math.floor(pos))
+      if (i !== shownRef.current) {
+        shownRef.current = i
+        setIndex(i)
+      }
+      if (t >= 1) {
+        entranceRef.current = null
+        posRef.current = lastRef.current
+        shownRef.current = lastRef.current
+        setIndex(lastRef.current)
+        renderAt(lastRef.current, false)
+      }
+    })
+    return () => unsub()
+  }, [scene, history, renderAt])
+
+  useEffect(() => {
+    if (!scene) return
+    const offHover = scene.onHover(setHover)
+    const offClick = scene.onClick(pick => setSelected(pick.slot))
+    return () => {
+      offHover()
+      offClick()
+    }
+  }, [scene])
+
   // Stable handle so the timeline can subscribe to the render loop without
   // resubscribing on every React render.
   const subscribeFrames = useCallback(
@@ -114,10 +156,16 @@ export default function App() {
     [scene]
   )
 
+  const stopAll = useCallback(() => {
+    playingRef.current = false
+    setPlaying(false)
+    entranceRef.current = null
+  }, [])
+
   const togglePlay = useCallback(() => {
+    if (entranceRef.current) stopAll()
     if (playingRef.current) {
-      playingRef.current = false
-      setPlaying(false)
+      stopAll()
       return
     }
     if (posRef.current >= lastRef.current) {
@@ -128,13 +176,12 @@ export default function App() {
     }
     playingRef.current = true
     setPlaying(true)
-  }, [renderAt])
+  }, [renderAt, stopAll])
 
   /** Parks the playhead at any fractional position and stops playback. */
   const scrub = useCallback(
     (pos: number) => {
-      playingRef.current = false
-      setPlaying(false)
+      stopAll()
       const clamped = Math.max(0, Math.min(lastRef.current, pos))
       posRef.current = clamped
       const i = Math.floor(clamped)
@@ -142,8 +189,54 @@ export default function App() {
       setIndex(i)
       renderAt(clamped, false)
     },
-    [renderAt]
+    [renderAt, stopAll]
   )
+
+  /** Jumps to a whole sample, the way keyboard stepping and search both want. */
+  const goTo = useCallback(
+    (row: number) => {
+      scrub(Math.max(0, Math.min(lastRef.current, Math.round(row))))
+    },
+    [scrub]
+  )
+
+  const step = useCallback(
+    (delta: number) => {
+      const base = Math.round(posRef.current)
+      goTo(base + delta)
+    },
+    [goTo]
+  )
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      const typing = t.closest('input, textarea, select')
+      if (typing) return
+
+      if (e.code === 'Space') {
+        if (e.repeat) return
+        e.preventDefault()
+        togglePlay()
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        step(-1)
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        step(1)
+      } else if (e.key === 'Home') {
+        e.preventDefault()
+        goTo(0)
+      } else if (e.key === 'End') {
+        e.preventDefault()
+        goTo(lastRef.current)
+      } else if (e.key === 'Escape') {
+        setSelected(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [togglePlay, step, goTo])
 
   const openRepo = useCallback(async () => {
     setError(null)
@@ -172,20 +265,6 @@ export default function App() {
     setHistory(new History(buildMockScan()))
   }, [])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || e.repeat) return
-      const t = e.target as HTMLElement
-      if (t.closest('input, textarea, select, button')) return
-      e.preventDefault()
-      togglePlay()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [togglePlay])
-
-  const showStart = !history
-
   return (
     <div className="app">
       <div className="stage-canvas" ref={stageRef} />
@@ -203,8 +282,18 @@ export default function App() {
             <Legend history={history} row={index} />
           </CommitBar>
           <div className="stage-hint">
-            绌烘牸 鎾斁/鏆傚仠 路 鎷栨嫿 鏃嬭浆 路 鍙抽敭 骞崇Щ 路 婊氳疆 缂╂斁
+            空格 播放/暂停 · ←→ 逐 commit · Home/End 首尾 · 悬停查看文件 · 点击查看修改史 · 空格外
+            单击空白取消选择
           </div>
+          {selected !== null ? (
+            <FilePanel
+              history={history}
+              slot={selected}
+              row={index}
+              onPickRow={goTo}
+              onClose={() => setSelected(null)}
+            />
+          ) : null}
           <Timeline
             samples={history.samples}
             totals={history.totals}
@@ -213,17 +302,21 @@ export default function App() {
             subscribe={subscribeFrames}
             onChange={scrub}
             controls={
-              <Playback
-                playing={playing}
-                speed={speed}
-                onToggle={togglePlay}
-                onSpeed={setSpeed}
-              />
+              <div className="timeline-controls">
+                <Playback
+                  playing={playing}
+                  speed={speed}
+                  onToggle={togglePlay}
+                  onSpeed={setSpeed}
+                />
+                <SearchBox history={history} onPick={goTo} />
+              </div>
             }
           />
+          <Tooltip history={history} row={index} pick={hover} />
         </>
       ) : null}
-      {showStart ? (
+      {!history ? (
         <StartScreen
           progress={progress}
           path={scanPath}
@@ -234,7 +327,7 @@ export default function App() {
         />
       ) : null}
       {!history && !isTauri() ? (
-        <div className="start-hint">娴忚鍣ㄩ瑙堟ā寮忥細鍙兘鏌ョ湅婕旂ず鏁版嵁</div>
+        <div className="start-hint">浏览器预览模式：只能查看演示数据</div>
       ) : null}
     </div>
   )

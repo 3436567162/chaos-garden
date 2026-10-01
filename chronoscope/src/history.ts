@@ -9,7 +9,7 @@
 import type { CommitMeta, ScanResult } from './types'
 import { computeLayout, type Layout } from './three/layout'
 import { STRIDE, footprintFor, heightFor } from './three/morph'
-import { LANG_NAMES, LANG_RGB, langIndex } from './three/palette'
+import { BINARY_INDEX, LANG_NAMES, LANG_RGB, langIndex, langName } from './three/palette'
 
 /** Slot absent marker; every real language index is >= 0. */
 const ABSENT = -1
@@ -18,6 +18,18 @@ export interface LangSlice {
   lang: string
   lines: number
   share: number
+}
+
+/** One point in a single file's life. */
+export interface FileRevision {
+  /** Sample row where this state began. */
+  row: number
+  deleted: boolean
+  lines: number
+  lang: string
+  isBinary: boolean
+  /** Line change against the previous revision; null on first appearance. */
+  delta: number | null
 }
 
 export class History {
@@ -102,6 +114,97 @@ export class History {
 
   get sampleCount(): number {
     return this.samples.length
+  }
+
+  /** Path owning a slot. */
+  pathAt(slot: number): string {
+    return this.layout.paths[slot] ?? ''
+  }
+
+  slotOf(path: string): number | undefined {
+    return this.layout.slotOf.get(path)
+  }
+
+  /** True when the file exists at this sample. */
+  existsAt(row: number, slot: number): boolean {
+    if (row < 0 || row >= this.sampleCount) return false
+    return this.langs[row * this.slots + slot] !== ABSENT
+  }
+
+  /** Line count at a sample; 0 when absent. */
+  linesAt(row: number, slot: number): number {
+    if (row < 0 || row >= this.sampleCount) return 0
+    return this.lines[row * this.slots + slot]
+  }
+
+  /** Language name at a sample; empty when absent. */
+  langAt(row: number, slot: number): string {
+    if (row < 0 || row >= this.sampleCount) return ''
+    const l = this.langs[row * this.slots + slot]
+    return l === ABSENT ? '' : langName(l)
+  }
+
+  /**
+   * Every sample where one file's content changed, oldest first. Walks the whole
+   * grid for that slot, which is O(stops) — cheap enough to compute on click.
+   */
+  fileHistory(slot: number): FileRevision[] {
+    const out: FileRevision[] = []
+    let present = false
+    let prevLines = 0
+    let prevLang = ABSENT
+
+    for (let row = 0; row < this.sampleCount; row++) {
+      const base = row * this.slots + slot
+      const lang = this.langs[base]
+      if (lang === ABSENT) {
+        if (present) {
+          out.push({
+            row,
+            deleted: true,
+            lines: 0,
+            lang: '',
+            isBinary: false,
+            delta: null
+          })
+        }
+        present = false;
+        prevLang = ABSENT;
+        continue;
+      }
+      const lines = this.lines[base]
+      if (!present || lines !== prevLines || lang !== prevLang) {
+        out.push({
+          row,
+          deleted: false,
+          lines,
+          lang: langName(lang),
+          isBinary: lang === BINARY_INDEX,
+          delta: present ? lines - prevLines : null
+        });
+        present = true;
+        prevLines = lines;
+        prevLang = lang;
+      }
+    }
+    return out
+  }
+
+  /** Samples whose commit message contains `needle`, case-insensitively. */
+  search(needle: string): number[] {
+    const q = needle.trim().toLowerCase();
+    if (!q) return []
+    const out: number[] = []
+    for (let i = 0; i < this.samples.length; i++) {
+      const s = this.samples[i];
+      if (
+        s.message.toLowerCase().includes(q) ||
+        s.authorName.toLowerCase().includes(q)
+      ) {
+        out.push(i)
+      }
+    }
+    return out
   }
 
   /**

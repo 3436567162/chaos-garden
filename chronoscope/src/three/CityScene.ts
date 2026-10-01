@@ -17,6 +17,7 @@ import {
   NeutralToneMapping,
   PCFShadowMap,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SRGBColorSpace,
   Vector2,
@@ -44,6 +45,19 @@ import {
 const FOV = 38
 const PITCH = (38 * Math.PI) / 180
 const AZIMUTH = (-28 * Math.PI) / 180
+
+/** Pointer travel, in CSS pixels, above which a press counts as an orbit drag. */
+const CLICK_SLOP = 5
+
+/** Cursor travel, in CSS pixels, below which a hover is not worth re-emitting. */
+const HOVER_SLOP = 8
+
+/** A block the pointer is over. `slot` indexes the layout and the mesh. */
+export interface Pick {
+  slot: number
+  clientX: number
+  clientY: number
+}
 
 function backdropTexture(): CanvasTexture {
   const c = document.createElement('canvas')
@@ -159,6 +173,18 @@ export class CityScene {
   private lastNow = 0
   private readonly ticks = new Set<(dt: number) => void>()
 
+  private readonly raycaster = new Raycaster()
+  private readonly pointerNdc = new Vector2()
+  private pointerClient = { x: 0, y: 0 }
+  private pointerInside = false
+  private pointerMoved = false
+  private pressOrigin: { x: number; y: number } | null = null
+  private lastEmit = { slot: -1, x: -1, y: -1 }
+  private readonly hoverCbs = new Set<(pick: Pick | null) => void>()
+  private readonly clickCbs = new Set<(pick: Pick) => void>()
+  /** Kept so dispose can detach them. */
+  private readonly detachPointer: Array<() => void> = []
+
   constructor(private readonly container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -231,17 +257,122 @@ export class CityScene {
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
     this.resize()
+    this.attachPointer()
 
     const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop)
       const dt = Math.min(64, now - this.lastNow)
       this.lastNow = now
       for (const cb of this.ticks) cb(dt)
+      this.pick()
       this.controls.update()
       this.composer.render()
     }
     this.lastNow = performance.now()
     this.raf = requestAnimationFrame(loop)
+  }
+
+  /**
+   * Hover and click on the blocks. Picking is deferred to the render loop so a
+   * burst of pointer events costs one raycast per frame, and a press only counts
+   * as a click if the pointer barely moved — otherwise every orbit drag would
+   * select a file.
+   */
+  private attachPointer(): void {
+    const el = this.renderer.domElement
+    const listen = <K extends keyof HTMLElementEventMap>(
+      target: HTMLElement | Window,
+      type: K | string,
+      handler: (e: Event) => void
+    ) => {
+      target.addEventListener(type, handler as EventListener)
+      this.detachPointer.push(() => target.removeEventListener(type, handler as EventListener))
+    }
+
+    const track = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect()
+      this.pointerClient = { x: e.clientX, y: e.clientY }
+      this.pointerNdc.set(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -(((e.clientY - rect.top) / rect.height) * 2 - 1)
+      )
+      this.pointerMoved = true
+    }
+
+    listen(el, 'pointermove', e => {
+      this.pointerInside = true
+      track(e as PointerEvent)
+    })
+    listen(el, 'pointerleave', () => {
+      this.pointerInside = false
+      this.lastEmit = { slot: -1, x: -1, y: -1 }
+      this.emitHover(null)
+    })
+    listen(el, 'pointerdown', e => {
+      this.pressOrigin = { x: (e as PointerEvent).clientX, y: (e as PointerEvent).clientY }
+    })
+    const endPress = (e: Event) => {
+      const pe = e as PointerEvent
+      const from = this.pressOrigin
+      // Cleared first, so the bubbling pair (canvas then window) fires once.
+      this.pressOrigin = null
+      if (!from) return
+      if (Math.hypot(pe.clientX - from.x, pe.clientY - from.y) > CLICK_SLOP) return
+      track(pe)
+      const pick = this.castPick()
+      if (pick) for (const cb of this.clickCbs) cb(pick)
+    }
+    listen(el, 'pointerup', endPress)
+    // A press released outside the canvas is not a click on a block.
+    listen(window, 'pointerup', endPress)
+  }
+
+  private castPick(): Pick | null {
+    if (!this.field || !this.pointerInside) return null
+    this.raycaster.setFromCamera(this.pointerNdc, this.camera)
+    const hit = this.raycaster.intersectObject(this.field.mesh, false)[0]
+    const id = hit?.instanceId
+    if (!hit || id === undefined) return null
+    return { slot: id, clientX: this.pointerClient.x, clientY: this.pointerClient.y }
+  }
+
+  private emitHover(pick: Pick | null): void {
+    const slot = pick ? pick.slot : -1
+    const x = pick ? pick.clientX : -1
+    const y = pick ? pick.clientY : -1
+    // Same block and a cursor that barely moved: nothing downstream would change.
+    const sameBlock = slot === this.lastEmit.slot
+    const stillCursor = Math.hypot(x - this.lastEmit.x, y - this.lastEmit.y) < HOVER_SLOP
+    if (sameBlock && stillCursor) return
+    this.lastEmit = { slot, x, y }
+    for (const cb of this.hoverCbs) cb(pick)
+  }
+
+  private pick(): void {
+    if (!this.pointerMoved) return
+    this.pointerMoved = false
+    // Suppress the tooltip while orbiting so it does not chase the cursor.
+    if (this.pressOrigin) {
+      this.emitHover(null)
+      return
+    }
+    this.emitHover(this.castPick())
+  }
+
+  /** Fires with the hovered block, or null when the pointer leaves. */
+  onHover(cb: (pick: Pick | null) => void): () => void {
+    this.hoverCbs.add(cb)
+    return () => {
+      this.hoverCbs.delete(cb)
+    }
+  }
+
+  /** Fires on a click that was not an orbit drag. */
+  onClick(cb: (pick: Pick) => void): () => void {
+    this.clickCbs.add(cb)
+    return () => {
+      this.clickCbs.delete(cb)
+    }
   }
 
   /**
@@ -345,6 +476,8 @@ showAt(history: History, lo: number, hi: number, fraction: number, staggered: bo
   dispose(): void {
     cancelAnimationFrame(this.raf)
     this.resizeObserver.disconnect()
+    for (const off of this.detachPointer) off()
+    this.detachPointer.length = 0
     this.controls.dispose()
     this.field?.dispose()
     for (const l of [this.grid, this.outline]) {

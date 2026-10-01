@@ -47,7 +47,7 @@ export const UNKNOWN_COLOR = PALETTE.Unknown
 export const LANG_NAMES = Object.keys(PALETTE)
 
 const UNKNOWN_INDEX = LANG_NAMES.indexOf('Unknown')
-const BINARY_INDEX = LANG_NAMES.indexOf('Binary')
+export const BINARY_INDEX = LANG_NAMES.indexOf('Binary')
 
 /** Packs a language name (plus the binary override) into a slot-sized integer. */
 export function langIndex(lang: string, isBinary: boolean): number {
