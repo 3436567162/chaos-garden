@@ -10,6 +10,7 @@
 | :--- | :--- | :--- | :--- |
 | [ContributorRank](#contributorrank) | 跨平台开源贡献度分析桌面应用，透明加权评分 | Tauri 2.8 · Rust · React 18 · TypeScript | `npm install && npm run tauri dev` |
 | [house_game · 禅庭](#house_game--禅庭) | 可走进去的日式枯山水庭院，全程序化生成 | Three.js 0.170 · GLSL · WebAudio | `python -m http.server 8000` |
+| [chronoscope](#chronoscope) | Git 仓库时间旅行：拖动时间轴看代码城市生长 | Tauri 2.12 · Rust · React 18 · Three.js 0.186 | `npm install && npm run tauri dev` |
 
 <details>
 <summary><b>目录结构</b></summary>
@@ -17,7 +18,8 @@
 ```text
 chaos-garden/
 ├─ ContributorRank/        # 开源贡献度分析桌面应用（Tauri + Rust + React）
-└─ house_game/             # 禅庭 · Three.js 枯山水互动场景（零构建，无依赖安装）
+├─ house_game/             # 禅庭 · Three.js 枯山水互动场景（零构建，无依赖安装）
+└─ chronoscope/            # Git 代码考古 · 3D 城市时间轴（Tauri + React + Three.js）
 ```
 
 </details>
@@ -132,6 +134,56 @@ python -m http.server 8000     # ES Module 需经 HTTP 打开，file:// 会被 C
 
 ---
 
+<a id="chronoscope"></a>
+
+## chronoscope
+
+把任意 Git 仓库变成一座**可以拖着时间轴看它长大的 3D 城市**：每个文件一栋楼，高度是行数、颜色是语言、位置由路径决定且整个历史中不跳变。拖动或自动播放时间轴，看项目从几个文件长成今天的样子。完全离线，不发任何网络请求。
+
+> 分阶段交付中：Phase 0（假数据驱动的城市、时间轴、自动播放）已完成，真实 `git2` 扫描器是下一步。
+
+<details>
+<summary><b>技术栈</b></summary>
+
+| 层 | 选型 |
+| --- | --- |
+| 桌面壳 | Tauri 2.12（Rust） |
+| 前端 | React 18 + TypeScript + Vite 6 |
+| 3D | three 0.186：单个 InstancedMesh、OrbitControls、UnrealBloom |
+| 图表 | 时间轴面积图 Canvas 手绘 |
+| Git / 缓存（Phase 1） | `git2` 读本地 `.git` · JSON 文件缓存 |
+
+</details>
+
+<details>
+<summary><b>核心能力</b></summary>
+
+- **稳定布局**：目录深度分带、带内字典序，对整个历史的路径并集只算一次
+- **对数缩放**：高度与占地都按 `log1p(行数)`，大文件不会压扁整座城
+- **跟手过渡**：300ms 缓动，可随时打断，从屏幕当前状态出发
+- **自动播放**：`空格` 播放 / 暂停，`0.5×`–`4×` 调速，拖动时间轴自动暂停
+- **规划中**：blob 去重缓存、≤200 采样点 + 按需扫描、HEAD 增量失效、文件修改史、搜索、bisect 可视化
+
+</details>
+
+<details>
+<summary><b>运行</b></summary>
+
+```bash
+cd chronoscope
+npm install
+npm run tauri dev      # 桌面开发窗口
+npm run tauri build    # 构建当前平台安装包
+```
+
+依赖：Node.js 20+、Rust stable、以及对应平台的 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)。
+
+</details>
+
+阶段规划、视觉编码、目录职责与实现要点详见 [`chronoscope/README.md`](chronoscope/README.md)。
+
+---
+
 <a id="使用的-ai"></a>
 
 ## 使用的 AI
@@ -143,6 +195,7 @@ python -m http.server 8000     # ES Module 需经 HTTP 打开，file:// 会被 C
 | ContributorRank | **GLM-5.3 flash** | 主要产出：工程脚手架、前后端实现、UI 与交互 |
 | ContributorRank | **GLM-5.3** | 算法设计：多平台数据聚合、身份归并、归一化加权评分模型 |
 | house_game | **Claude Opus 5.5** | 全部产出：场景架构、程序化几何、着色器、交互系统、模块拆分 |
+| chronoscope | **Claude Fable 5** | 全部产出：工程脚手架、稳定布局算法、InstancedMesh 渲染与过渡、视觉设计、时间轴与自动播放 |
 
 <details>
 <summary><b>分工说明</b></summary>
@@ -150,6 +203,8 @@ python -m http.server 8000     # ES Module 需经 HTTP 打开，file:// 会被 C
 评分模型的设计思路（指标选取、max-normalization 的取舍、权重语义）由 **GLM-5.3** 敲定，具体工程落地由 **GLM-5.3 flash** 完成。
 
 禅庭场景（`house_game`）由 **Claude Opus 5.5** 独立完成，涵盖砂纹高度图算法、破面屋顶曲面、龙的脊线扫掠、四季环境插值与积雪 shader patch 等全部实现。
+
+代码城市（`chronoscope`）由 **Claude Fable 5** 独立完成，涵盖 Tauri 工程搭建、路径到网格的稳定布局、单 InstancedMesh 渲染与可打断过渡、暮色主题视觉与自动播放。
 
 </details>
 
