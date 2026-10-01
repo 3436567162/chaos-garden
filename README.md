@@ -11,7 +11,7 @@
 ```text
 chaos-garden/
 ├─ ContributorRank/        # 开源贡献度分析桌面应用（Tauri + Rust + React）
-└─ house_game/             # Three.js 枯山水场景小玩具（另开，未纳入本仓库管理）
+└─ house_game/             # 禅庭 · Three.js 枯山水互动场景（零构建，无依赖安装）
 ```
 
 ---
@@ -63,6 +63,42 @@ npm run tauri build    # 构建当前平台安装包
 
 ---
 
+## house_game · 禅庭
+
+一座可以走进去的**日式枯山水庭院**：白砂、石组、五重宝塔、盘旋青龙，四个季节与一整套可交互器物，**全部程序化生成**——没有模型文件、没有贴图素材、没有音频文件。
+
+### 技术栈
+
+| 层 | 选型 |
+| --- | --- |
+| 渲染 | Three.js 0.170（WebGLRenderer、ACESFilmic、PCFSoft 阴影） |
+| 相机 | OrbitControls（阻尼 / 环游 / 跟随龙） |
+| 着色 | GLSL ES 3.0（砂面、天空、水面、积雪 patch） |
+| 贴图 | 运行时 Canvas 生成（砂纹高度图、光晕、噪声） |
+| 音频 | WebAudio 实时合成 |
+| 模块 | 原生 ESM + importmap，无打包器 |
+
+### 核心玩法
+
+- **耙砂**：拖动即在白砂上耙出砂纹，耙砂僧会同步跟着耙
+- **投石**：点击白砂泛起同心涟漪
+- **四季**：`1`–`4` 切换春樱 / 夏雨 / 秋枫 / 冬雪，环境色连续插值过渡
+- **昼夜**：`N` 切换，灯笼自动点亮；`F` 跟随青龙飞行
+- **器物**：宝塔风铃可撞响、青龙会喷火、石灯笼可点灭、鹿威蹲踞会流水、屋顶有猫
+
+### 运行
+
+```bash
+cd house_game
+python -m http.server 8000     # ES Module 需经 HTTP 打开，file:// 会被 CORS 拦截
+```
+
+无 `npm install`，无构建步骤。`three` 由 importmap 指向 CDN，改版本只需动 `index.html` 一行。
+
+场景架构、几何算法、着色器、交互系统与模块拆分详见 [`house_game/README.md`](house_game/README.md)。
+
+---
+
 ## 使用的 AI
 
 本仓库项目由 AI 辅助生成。
@@ -71,8 +107,11 @@ npm run tauri build    # 构建当前平台安装包
 | --- | --- | --- |
 | ContributorRank | **GLM-5.3 flash** | 主要产出：工程脚手架、前后端实现、UI 与交互 |
 | ContributorRank | **GLM-5.3** | 算法设计：多平台数据聚合、身份归并、归一化加权评分模型 |
+| house_game | **Claude Opus 5.5** | 全部产出：场景架构、程序化几何、着色器、交互系统、模块拆分 |
 
 评分模型的设计思路（指标选取、max-normalization 的取舍、权重语义）由 **GLM-5.3** 敲定，具体工程落地由 **GLM-5.3 flash** 完成。
+
+禅庭场景（`house_game`）由 **Claude Opus 5.5** 独立完成，涵盖砂纹高度图算法、破面屋顶曲面、龙的脊线扫掠、四季环境插值与积雪 shader patch 等全部实现。
 
 ---
 

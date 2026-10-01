@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>枯山水 · 禅庭</title>
+<style>
+  :root { --ink: #2b2620; --paper: rgba(250, 245, 232, 0.88); --red: #b8322a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfd6d4;
+    font-family: "Noto Serif SC", "Songti SC", "SimSun", serif; color: var(--ink); }
+  canvas { display: block; }
+  #panel { position: fixed; top: 16px; left: 16px; width: 260px; padding: 14px 16px;
+    background: var(--paper); border-left: 4px solid var(--red); border-radius: 4px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.15); backdrop-filter: blur(4px); user-select: none; }
+  #panel h1 { margin: 0 0 2px; font-size: 22px; letter-spacing: 6px; }
+  #panel .sub { font-size: 12px; opacity: .7; margin-bottom: 10px; letter-spacing: 2px; }
+  #panel ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+  #panel .seal { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px;
+    border: 2px solid var(--red); color: var(--red); font-size: 13px; line-height: 13px;
+    display: grid; place-items: center; text-align: center; border-radius: 3px; transform: rotate(-6deg); }
+  #toolbar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; padding: 8px; background: var(--paper); border-radius: 6px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.15); }
+  #toolbar button { font: inherit; font-size: 14px; padding: 7px 12px; border: 1px solid #8a7d6a;
+    background: #fbf7ec; color: var(--ink); border-radius: 4px; cursor: pointer; transition: .15s; }
+  #toolbar button:hover { background: #efe6d2; }
+  #toolbar button:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+  #toolbar button[aria-pressed="true"] { background: var(--ink); color: #fbf7ec; border-color: var(--ink); }
+  #seasons { position: fixed; top: 16px; right: 16px; display: flex; gap: 6px; padding: 6px;
+    background: var(--paper); border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,.15); }
+  #seasons button { font: inherit; font-size: 18px; width: 44px; height: 44px; border: 1px solid #8a7d6a;
+    background: #fbf7ec; color: var(--ink); border-radius: 50%; cursor: pointer; transition: .15s; }
+  #seasons button:hover { background: #efe6d2; }
+  #seasons button:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+  #seasons button[aria-checked="true"] { background: var(--red); border-color: var(--red); color: #fbf7ec; }
+  #tooltip { position: fixed; pointer-events: none; padding: 5px 9px; font-size: 13px;
+    background: rgba(43,38,32,.88); color: #fbf7ec; border-radius: 3px; white-space: nowrap;
+    transform: translate(14px, 14px); opacity: 0; transition: opacity .12s; }
+  #tooltip small { display: block; opacity: .7; font-size: 11px; }
+  #toast { position: fixed; top: 22px; left: 50%; transform: translateX(-50%); padding: 8px 18px;
+    background: rgba(43,38,32,.85); color: #fbf7ec; border-radius: 20px; font-size: 15px;
+    letter-spacing: 2px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #e9e4d6;
+    font-size: 20px; letter-spacing: 8px; transition: opacity .8s; z-index: 10; }
+  body.raking canvas { cursor: crosshair; }
+  @media (max-width: 700px) { #panel { width: auto; right: 16px; } #panel ul { display: none; }
+    #seasons { top: auto; bottom: 120px; right: 50%; transform: translateX(50%); }
+    #toolbar { flex-wrap: wrap; justify-content: center; width: calc(100% - 24px); } }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="loading">禅 · 庭 · 加 · 载 · 中</div>
+<div id="panel" role="region" aria-label="说明">
+  <div class="seal">枯山<br/>水</div>
+  <h1>禅庭</h1>
+  <div class="sub" id="panel-sub">KARESANSUI · 枯山水</div>
+  <ul>
+    <li>拖动旋转视角，滚轮缩放</li>
+    <li>点击白砂：投石泛起涟漪</li>
+    <li>开启「耙砂」后拖动画出砂纹</li>
+    <li>点击宝塔风铃、石灯笼、鹿威</li>
+    <li>点击飞龙：喷火加速</li>
+    <li>点击小人、猫、樱花树、枫树</li>
+    <li>右上角切换四季：春樱 · 夏雨 · 秋枫 · 冬雪</li>
+    <li>快捷键：1–4 四季 · N 昼夜 · R 耙砂 · F 跟随龙</li>
+  </ul>
+</div>
+<div id="seasons" role="radiogroup" aria-label="季节"></div>
+<div id="toolbar" role="toolbar" aria-label="庭院控制">
+  <button id="btn-night" aria-pressed="false">🌙 夜晚</button>
+  <button id="btn-rake" aria-pressed="false">🪮 耙砂</button>
+  <button id="btn-follow" aria-pressed="false">🐉 跟随龙</button>
+  <button id="btn-rotate" aria-pressed="false">🔄 环游</button>
+  <button id="btn-reset">🧹 重铺砂纹</button>
+  <button id="btn-sound" aria-pressed="true">🔔 声音</button>
+</div>
+<div id="tooltip" role="status" aria-live="polite"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
