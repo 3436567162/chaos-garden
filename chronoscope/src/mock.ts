@@ -1,7 +1,8 @@
-// Phase 0 fixture: a hand-written 8-commit history for a fictional project.
-// Replaced by the real scanner in Phase 1.
+// Demo fixture: a hand-written history for a fictional project, emitted in the
+// same delta format the Rust scanner produces, so the app has something to show
+// before a real repository is opened.
 
-import type { FileEntry, Snapshot, Timeline } from './types'
+import type { FileChange, Sample, ScanResult } from './types'
 
 const EXT_LANG: Record<string, string> = {
   rs: 'Rust', ts: 'TypeScript', tsx: 'TypeScript', js: 'JavaScript', css: 'CSS',
@@ -99,34 +100,59 @@ const COMMITS: CommitSpec[] = [
   ] }
 ]
 
-export function buildMockTimeline(): Timeline {
+export function buildMockScan(): ScanResult {
   const t0 = Date.UTC(2024, 2, 4, 9, 30) / 1000
-  const tree = new Map<string, FileEntry>()
-  const snapshots: Snapshot[] = []
+  const live = new Map<string, { lang: string; lines: number }>()
+  const samples: Sample[] = []
+  const allPaths = new Set<string>()
   let parent: string | null = null
 
-  for (const spec of COMMITS) {
+  for (const [n, spec] of COMMITS.entries()) {
+    const changes: FileChange[] = []
+    const touched = new Map(live)
+
     for (const [path, v] of spec.ops) {
       if (v === 'rm') {
-        tree.delete(path)
+        if (touched.delete(path)) {
+          changes.push({ path, lang: '', lines: null, isBinary: false })
+        }
         continue
       }
       const isBinary = langOf(path) === 'Binary'
-      tree.set(path, { path, blobOid: fakeOid(`${path}:${v}`), lang: langOf(path), lines: isBinary ? 0 : v, isBinary })
+      const entry = { lang: langOf(path), lines: isBinary ? 0 : v }
+      const before = touched.get(path)
+      if (!before || before.lines !== entry.lines || before.lang !== entry.lang) {
+        changes.push({ path, lang: entry.lang, lines: entry.lines, isBinary })
+      }
+      touched.set(path, entry)
+      allPaths.add(path)
     }
+
     const author = AUTHORS[spec.author]
     const oid = fakeOid(`${parent ?? 'root'}:${spec.message}`)
-    snapshots.push({
-      commitOid: oid,
+    samples.push({
+      oid,
       parents: parent ? [parent] : [],
-      timestamp: t0 + spec.daysAfter * 86400 + snapshots.length * 3917,
+      timestamp: t0 + spec.daysAfter * 86400 + n * 3917,
       message: spec.message,
       authorName: author.name,
       authorEmail: author.email,
-      files: Array.from(tree.values()).sort((a, b) => (a.path < b.path ? -1 : 1))
+      changes
     })
+    live.clear()
+    for (const [k, v] of touched) live.set(k, v)
     parent = oid
   }
 
-  return { repoName: 'lighthouse (demo data)', snapshots }
+  return {
+    repoName: 'lighthouse (demo data)',
+    head: samples[samples.length - 1].oid,
+    commitCount: samples.length,
+    firstTimestamp: samples[0].timestamp,
+    lastTimestamp: samples[samples.length - 1].timestamp,
+    fileCount: allPaths.size,
+    strided: false,
+    samples,
+    fromCache: false
+  }
 }

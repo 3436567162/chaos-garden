@@ -1,17 +1,15 @@
-// Mirrors src-tauri/src/model.rs (serde camelCase).
+// Wire types. Mirrors src-tauri/src/model.rs (serde camelCase).
 
-export interface FileEntry {
-  /** Repository-relative path, posix separators. */
+export interface FileChange {
   path: string
-  blobOid: string
   lang: string
-  /** Line count; 0 for empty or binary files. */
-  lines: number
+  /** Line count; null means the path was deleted at this point. */
+  lines: number | null
   isBinary: boolean
 }
 
-export interface Snapshot {
-  commitOid: string
+export interface CommitMeta {
+  oid: string
   parents: string[]
   /** Unix seconds. */
   timestamp: number
@@ -19,11 +17,30 @@ export interface Snapshot {
   message: string
   authorName: string
   authorEmail: string
-  files: FileEntry[]
 }
 
-export interface Timeline {
+/** A sampled commit plus the changes it introduced relative to the previous sample. */
+export interface Sample extends CommitMeta {
+  changes: FileChange[]
+}
+
+export interface ScanResult {
   repoName: string
-  /** Oldest first. */
-  snapshots: Snapshot[]
+  head: string
+  commitCount: number
+  firstTimestamp: number
+  lastTimestamp: number
+  /** Number of distinct file slots after ignore rules. */
+  fileCount: number
+  /** True when commits were strided down to fewer timeline stops. */
+  strided: boolean
+  samples: Sample[]
+  /** Cache was reused because HEAD had not moved. */
+  fromCache: boolean
+}
+
+export interface ScanProgress {
+  phase: 'commits' | 'trees' | 'saving'
+  done: number
+  total: number
 }

@@ -1,19 +1,19 @@
 import type { ReactNode } from 'react'
-import type { Snapshot } from '../types'
+import type { CommitMeta } from '../types'
 import { fmtDateTime, fmtInt, shortSha } from '../format'
 
 interface Props {
   repoName: string
-  snapshot: Snapshot
+  sample: CommitMeta
+  files: number
+  lines: number
   index: number
   count: number
   /** Rendered under the commit card in the left column (the legend). */
   children?: ReactNode
 }
 
-export function CommitBar({ repoName, snapshot, index, count, children }: Props) {
-  let lines = 0
-  for (const f of snapshot.files) lines += f.lines
+export function CommitBar({ repoName, sample, files, lines, index, count, children }: Props) {
   return (
     <header className="commitbar">
       <div className="hud-left">
@@ -23,18 +23,20 @@ export function CommitBar({ repoName, snapshot, index, count, children }: Props)
             <span className="sep">/</span>
             <span>{repoName}</span>
           </div>
-          <div className="commit-msg" title={snapshot.message}>{snapshot.message}</div>
+          <div className="commit-msg" title={sample.message}>
+            {sample.message}
+          </div>
           <div className="commit-meta">
-            <span className="commit-sha mono">{shortSha(snapshot.commitOid)}</span>
-            <span>{snapshot.authorName}</span>
-            <span className="mono">{fmtDateTime(snapshot.timestamp)}</span>
+            <span className="commit-sha mono">{shortSha(sample.oid)}</span>
+            <span>{sample.authorName}</span>
+            <span className="mono">{fmtDateTime(sample.timestamp)}</span>
           </div>
         </div>
         {children}
       </div>
       <div className="stats glass">
         <div className="stat">
-          <div className="stat-value mono">{fmtInt(snapshot.files.length)}</div>
+          <div className="stat-value mono">{fmtInt(files)}</div>
           <div className="stat-label">files</div>
         </div>
         <div className="stat">
@@ -42,7 +44,10 @@ export function CommitBar({ repoName, snapshot, index, count, children }: Props)
           <div className="stat-label">lines</div>
         </div>
         <div className="stat">
-          <div className="stat-value mono">{index + 1}<span className="stat-of">/{count}</span></div>
+          <div className="stat-value mono">
+            {fmtInt(index + 1)}
+            <span className="stat-of">/{fmtInt(count)}</span>
+          </div>
           <div className="stat-label">commit</div>
         </div>
       </div>

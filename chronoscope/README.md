@@ -30,12 +30,26 @@
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | Phase 0 | Tauri + React + Three.js 骨架，假数据驱动的 3D 城市、时间轴、自动播放 | ✅ 完成 |
-| Phase 1 | `git2` 真实扫描器：blob 去重缓存、≤200 采样点、按需扫描、HEAD 增量失效 | ⏳ 下一步 |
-| Phase 2 | 悬停 tooltip、键盘逐 commit 步进、搜索、射线拾取 + 文件详情与修改史、入场生长动画 | 计划中 |
+| Phase 1 | `git2` 真实扫描器：blob 去重缓存、≤200 采样点、增量缓存、HEAD 失效 | ✅ 完成 |
+| Phase 2 | 悬停 tooltip、键盘逐 commit 步进、搜索、射线拾取 + 文件详情与修改史、入场生长动画 | 下一步 |
 | Phase 3 | 10000 方块 60fps 实测、空态 / 错误态、细节打磨 | 计划中 |
 | Phase 4 | `git bisect` 二分查找可视化（可选） | 计划中 |
 
-目前打开应用看到的是内置的演示仓库 `lighthouse`（8 个手写 commit、最多 79 个文件），还不能选择真实仓库。
+启动后点「打开本地仓库」选一个 Git 目录即可；「看演示数据」加载内置的 `lighthouse` 演示仓库。
+
+**两个已知边界**：
+
+- 超过 2 MB 的文件不进入城市（数它的行数要解压整份内容，画面上也没收益）
+- 时间轴最多 200 个停靠点；commit 更多的仓库会被等距抽样，此时逐 commit 步进会落在采样点上
+
+本地实测（冷扫描，含解压所有 blob）：
+
+| 仓库 | commit | 槽位 | 冷扫 | 载荷 |
+| --- | --- | --- | --- | --- |
+| `plugins/superpowers` | 441 | 315 | 0.10s | 0.14 MB |
+| `PraisonAI` | 7 108 | 7 704 | 10.5s | 1.84 MB |
+| `chaos-garden`（本仓库） | 6 | 139 | 0.03s | 0.02 MB |
+| `flutter` | 89 102 | 25 508 | 56s | 91 MB（超上限，会被拒绝） |
 
 ---
 
@@ -99,8 +113,9 @@ cd src-tauri && cargo clippy --all-targets -- -D warnings
 | 3D | three 0.186（唯一 3D 依赖）：InstancedMesh、OrbitControls、UnrealBloom 后处理 |
 | 图表 | 时间轴面积图用 Canvas 2D 手绘，无图表库 |
 | 样式 | 原生 CSS，无组件库 |
-| Git（Phase 1） | `git2` 直接读本地 `.git`，完全离线 |
-| 缓存（Phase 1） | JSON 文件：缓存只按仓库整读整写，不需要查询；路径表 + 每个快照存索引数组，200 个采样点 × 1 万文件也只有几 MB，且省掉 SQLite 的 C 编译 |
+| Git | `git2` 0.21 直接读本地 `.git`，完全离线 |
+| 缓存 | JSON 文件：缓存只按仓库整读整写，不需要查询；key 是仓库路径的哈希，文件里存 HEAD 与扫描器版本用于失效判断 |
+| 前端状态 | 两个 `Int32Array`（形状 `采样点 × 城市槽位`），不是几百万个 JS 对象 |
 
 ---
 
@@ -111,21 +126,28 @@ chronoscope/
 ├─ src-tauri/
 │  ├─ src/
 │  │  ├─ main.rs           # 入口
-│  │  └─ lib.rs            # Tauri builder，注册 dialog 插件（Phase 1 加 commands）
+│  │  ├─ lib.rs            # Tauri commands、扫描编排、JSON 契约测试
+│  │  ├─ model.rs          # 线上与缓存的数据结构
+│  │  ├─ scan.rs           # 仓库遍历、抽样、增量 diff、忽略规则
+│  │  ├─ cache.rs          # 按仓库整读整写的 JSON 缓存
+│  │  └─ lang.rs           # 扩展名 → 语言
 │  ├─ capabilities/        # 权限：core:default、dialog:default
 │  └─ tauri.conf.json      # 生产环境 CSP 只允许本地与 IPC
 ├─ src/
-│  ├─ App.tsx              # 场景生命周期、连续播放位置、自动播放调度、空格快捷键
-│  ├─ types.ts             # Snapshot / FileEntry，与 Rust 模型一一对应
-│  ├─ mock.ts              # Phase 0 演示仓库（8 个 commit 的增删改）
+│  ├─ App.tsx              # 场景生命周期、连续播放位置、仓库选择、自动播放调度
+│  ├─ history.ts           # 扫描结果 → 布局 + 扁平状态数组
+│  ├─ lib.ts               # invoke / 事件 / 目录选择器的薄封装
+│  ├─ types.ts             # 与 Rust 一一对应的线上类型
+│  ├─ mock.ts              # 演示仓库（与扫描器同格式的增量数据）
 │  ├─ format.ts            # 日期、数字、短 SHA
 │  ├─ three/
 │  │  ├─ CityScene.ts      # 渲染器、相机、灯光、阴影、地面、网格、Bloom；开放 onTick 帧循环
-│  │  ├─ BlockField.ts     # 单个 InstancedMesh 承载全部文件；按快照身份缓存目标数组
+│  │  ├─ BlockField.ts     # 单个 InstancedMesh 承载全部文件；按采样点缓存目标数组
 │  │  ├─ layout.ts         # path → 稳定网格坐标
-│  │  ├─ morph.ts          # 快照 → 目标数组；两目标集之间的小数位置混合与错峰
+│  │  ├─ morph.ts          # 槽位几何、两份状态之间的小数位置混合与错峰
 │  │  └─ palette.ts        # 语言色板与场景配色
 │  └─ components/
+│     ├─ StartScreen.tsx   # 选仓库 / 扫描进度 / 错误提示
 │     ├─ CommitBar.tsx     # 顶部：提交信息卡 + 文件 / 行数 / 进度
 │     ├─ Legend.tsx        # 语言占比条与图例
 │     ├─ Timeline.tsx      # 时间轴、刻度、双层面积图、任意位置停靠
@@ -148,6 +170,35 @@ chronoscope/
 <summary><b>一万个文件也只有一次 draw call</b></summary>
 
 所有方块共用一个 `InstancedMesh`，每帧直接写 `instanceMatrix`（只有缩放 + 平移，手写列主序矩阵，不走 `Matrix4.compose`）和 `instanceColor`。方块几何体的顶点色里烘了一条竖向渐变——墙脚暗、楼顶亮——与实例颜色相乘，不加任何额外 pass 就有接地感和发光的屋顶，再交给 Bloom 晕开。
+
+</details>
+
+<details>
+<summary><b>blob OID 是缓存的钥匙</b></summary>
+
+按扩展名猜语言很容易在重命名时出错，所以按内容判定：`Blob::is_binary()` 加行数统计，结果以 **blob OID** 为键存在一张 `HashMap` 里。遍历 commit 的 tree 时先查这张表，命中就直接拿行数、**不解压内容**。
+
+相邻 commit 之间绝大多数文件没变，所以这张表跨采样点复用。实测本仓库（6 个commit、139 个文件）：冷扫描 47.6ms，命中缓存后 2.0ms，**约 24 倍**差距。
+
+</details>
+
+<details>
+<summary><b>只发增量，不发全量</b></summary>
+
+每个采样点只发送**相对上一个采样点变化的文件**（新增 / 修改 / 删除，删除用 `lines: null`）。前端 `History` 把这些增量向前重放进两张 `Int32Array`（形状 `采样点 × 槽位`），每行是一份完整快照的槽位状态。
+
+不这么做的代价很直观：200 个采样点 × 1 万文件 = 200 万个文件对象。所以城市状态是两个定型数组，而不是几百万个 JS 对象。
+
+还有一道兜底：`采样点 × 文件数` 超过 400 万就减少采样点，宁可少几个停靠点也不发几百 MB 的载荷。
+
+</details>
+
+<details>
+<summary><b>缓存怎么失效</b></summary>
+
+缓存按仓库分文件，文件名是仓库绝对路径的 FNV-1a 哈希。文件里存着 `(扫描器版本, 规范化仓库路径, HEAD)`，三者任一不匹配就整体丢弃重建 —— 所以移动了 HEAD 或者改了扫描规则，旧缓存不会悄悄污染结果。
+
+blob 表超过 40 万条时会被清空：丢条目只影响下次扫描的速度，不影响正确性。
 
 </details>
 
@@ -207,8 +258,22 @@ chronoscope/
 
 ## 已知限制
 
-- 还没有接入真实 Git 仓库（Phase 1）；目前只有内置演示数据
-- Bloom 与软阴影有额外开销，10000 方块下的帧率尚未实测（Phase 3）
+**规模上限**（超出会明确报错并指出原因，而不是硬跑）
+
+| 上限 | 值 | 触发时的提示 |
+| --- | --- | --- |
+| 单文件 | 2 MB | 超大文件不进入城市 |
+| 城市槽位 | 60 000 个历史路径 | 报错并列出贡献最多的目录 |
+| 载荷 | 24 MB 变更数据 | 报错并提示历史过于密集 |
+| 停靠点 × 槽位 | 400 万 | 自动减少停靠点 |
+
+槽位上限针对的是**历史上出现过的所有路径**，不是 HEAD 的文件数 —— 每个文件从第一次提交到最后一次删除都占着一块地，所以老仓库累积的路径远多于它当前的文件数。flutter 就是典型：HEAD 有 15 383 个文件，历史里出现过 25 508 个。
+
+**其他限制**
+
+- 每个采样点都遍历整棵树，代价是 O(采样点 × 文件数)。7 000 个 commit、5 500 个文件的仓库冷扫约 10 秒；改成走 `diff_tree_to_tree` 只遍历变化项可以降到秒级，是已知的下一步优化
+- 忽略 `node_modules`、`target`、`dist`、`vendor` 等目录，靠自己的路径规则，没有读 `.gitignore`
+- Bloom 与软阴影有额外开销，60 000 槽位下的帧率未实测（Phase 3）
 - 生产包约 730 kB（three 未拆包），对本地桌面应用影响不大
 - 当前一个 commit 只记录提交信息首行
 
@@ -222,7 +287,12 @@ chronoscope/
 | --- | --- | --- |
 | Phase 0 主体 | **Claude Fable 5** | 工程脚手架、Tauri 配置、布局算法、InstancedMesh 渲染、视觉设计、时间轴与自动播放 |
 | 动效与时间轴重构 | **space bunny** | 连续播放时钟、径向错峰、速度连续缓动、时间轴命令式渲染与任意位置停靠 |
+| Phase 1 真实扫描器 | **space bunny** | `git2` 仓库遍历与抽样、blob 去重缓存、增量 diff 与 JSON 缓存、`History` 状态重放、仓库选择与扫描进度界面 |
 
 第二阶段修掉了首版动效的三个问题：过渡只占每步 900ms 中的 300ms 导致城市三分之二时间静止、`easeOutCubic` 把运动压在开头导致每个 commit 边界速度归零、以及进度条无法停在任意位置。详见[实现要点](#实现要点)。
+
+第三阶段把假数据换成真实仓库：完全离线读 `.git`，用 blob OID 做去重缓存把冷扫描压到 47.6ms / 热扫描 2.0ms，线上只传增量、由前端重放进定型数组。
+
+`src-tauri` 有 14 个 Rust 测试，其中包含对着真实 git 对象跑的端到端扫描，以及一组守住 JSON 字段命名的契约测试 —— Rust 侧改了字段名而 TS 侧没跟上，会在测试里失败而不是等到运行时。
 
 [回到顶部](#top)

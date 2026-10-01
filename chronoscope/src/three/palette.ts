@@ -1,5 +1,7 @@
 // Language colours: saturated for source code, pale porcelain tones for
 // config / docs, so the "real" code reads first. sRGB hex.
+import { Color } from 'three'
+
 const PALETTE: Record<string, string> = {
   Rust: '#ff8a5c',
   TypeScript: '#5aa9ff',
@@ -40,6 +42,35 @@ const PALETTE: Record<string, string> = {
 }
 
 export const UNKNOWN_COLOR = PALETTE.Unknown
+
+/** Stable order used to pack a language into one integer per slot. */
+export const LANG_NAMES = Object.keys(PALETTE)
+
+const UNKNOWN_INDEX = LANG_NAMES.indexOf('Unknown')
+const BINARY_INDEX = LANG_NAMES.indexOf('Binary')
+
+/** Packs a language name (plus the binary override) into a slot-sized integer. */
+export function langIndex(lang: string, isBinary: boolean): number {
+  if (isBinary) return BINARY_INDEX
+  const i = LANG_NAMES.indexOf(lang)
+  return i < 0 ? UNKNOWN_INDEX : i
+}
+
+export function langName(index: number): string {
+  return LANG_NAMES[index] ?? 'Unknown'
+}
+
+/** Language colours as linear RGB, laid out as [r, g, b] per LANG_NAMES entry. */
+export const LANG_RGB: Float32Array = (() => {
+  const out = new Float32Array(LANG_NAMES.length * 3)
+  LANG_NAMES.forEach((name, i) => {
+    const c = new Color(PALETTE[name])
+    out[i * 3] = c.r
+    out[i * 3 + 1] = c.g
+    out[i * 3 + 2] = c.b
+  })
+  return out
+})()
 
 export function langColor(lang: string): string {
   return PALETTE[lang] ?? UNKNOWN_COLOR

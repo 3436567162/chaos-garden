@@ -2,18 +2,19 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   type MutableRefObject,
   type PointerEvent,
   type ReactNode
 } from 'react'
-import type { Snapshot } from '../types'
+import type { CommitMeta } from '../types'
 import { fmtDate, fmtInt, shortSha } from '../format'
 
 interface Props {
-  snapshots: Snapshot[]
-  /** Integer commit index; drives the readouts and the tick highlight. */
+  samples: CommitMeta[]
+  /** Total lines per sample, driving the area chart. */
+  totals: Int32Array
+  /** Integer stop index; drives the readouts and the tick highlight. */
   index: number
   /** Continuous playback position. The playhead tracks this, not `index`. */
   positionRef: MutableRefObject<number>
@@ -31,7 +32,7 @@ const CHART_H = 46
  * layer revealed by a CSS clip. Moving the playhead then costs one style write
  * per frame instead of a full path redraw.
  */
-function drawLayer(canvas: HTMLCanvasElement, totals: number[], layer: 'future' | 'past') {
+function drawLayer(canvas: HTMLCanvasElement, totals: ArrayLike<number>, layer: 'future' | 'past') {
   const dpr = window.devicePixelRatio || 1
   const w = canvas.clientWidth
   const h = canvas.clientHeight
@@ -43,7 +44,7 @@ function drawLayer(canvas: HTMLCanvasElement, totals: number[], layer: 'future' 
   g.clearRect(0, 0, w, h)
   if (totals.length === 0) return
 
-  const max = Math.max(1, ...totals)
+  const max = Math.max(1, ...Array.from(totals))
   const last = Math.max(1, totals.length - 1)
   const px = (i: number) => (totals.length <= 1 ? w / 2 : (i / last) * w)
   const py = (v: number) => h - 2 - (v / max) * (h - 6)
@@ -75,18 +76,21 @@ function drawLayer(canvas: HTMLCanvasElement, totals: number[], layer: 'future' 
   g.fill(path)
 }
 
-export function Timeline({ snapshots, index, positionRef, subscribe, onChange, controls }: Props) {
+export function Timeline({
+  samples,
+  totals,
+  index,
+  positionRef,
+  subscribe,
+  onChange,
+  controls
+}: Props) {
   const trackRef = useRef<HTMLDivElement>(null)
   const pastRef = useRef<HTMLCanvasElement>(null)
   const handleRef = useRef<HTMLDivElement>(null)
   const flagRef = useRef<HTMLDivElement>(null)
-  const last = Math.max(1, snapshots.length - 1)
-  const pctOf = (p: number) => (snapshots.length <= 1 ? 50 : (p / last) * 100)
-
-  const totals = useMemo(
-    () => snapshots.map(s => s.files.reduce((n, f) => n + f.lines, 0)),
-    [snapshots]
-  )
+  const last = Math.max(1, samples.length - 1)
+  const pctOf = (p: number) => (samples.length <= 1 ? 50 : (p / last) * 100)
 
   useEffect(() => {
     const future = trackRef.current?.querySelector<HTMLCanvasElement>('.timeline-chart-future')
@@ -146,7 +150,7 @@ export function Timeline({ snapshots, index, positionRef, subscribe, onChange, c
       unsubscribe()
       ro.disconnect()
     }
-  }, [subscribe, positionRef, snapshots.length])
+  }, [subscribe, positionRef, samples.length])
 
   /** Fractional position, so a click can park between two commits. */
   const positionAt = useCallback(
@@ -167,9 +171,9 @@ export function Timeline({ snapshots, index, positionRef, subscribe, onChange, c
     if (e.currentTarget.hasPointerCapture(e.pointerId)) onChange(positionAt(e.clientX))
   }
 
-  const current = snapshots[index]
-  const first = snapshots[0]
-  const end = snapshots[snapshots.length - 1]
+  const current = samples[index]
+  const first = samples[0]
+  const end = samples[samples.length - 1]
 
   return (
     <footer className="timeline glass">
@@ -182,9 +186,9 @@ export function Timeline({ snapshots, index, positionRef, subscribe, onChange, c
           tabIndex={0}
           aria-label="Commit timeline"
           aria-valuemin={0}
-          aria-valuemax={snapshots.length - 1}
+          aria-valuemax={samples.length - 1}
           aria-valuenow={index}
-          aria-valuetext={current ? `${shortSha(current.commitOid)} ${current.message}` : undefined}
+          aria-valuetext={current ? `${shortSha(current.oid)} ${current.message}` : undefined}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
         >
@@ -198,9 +202,9 @@ export function Timeline({ snapshots, index, positionRef, subscribe, onChange, c
             style={{ height: CHART_H }}
           />
           <div className="timeline-axis">
-            {snapshots.map((s, i) => (
+            {samples.map((s, i) => (
               <div
-                key={s.commitOid}
+                key={s.oid}
                 className={i <= index ? 'timeline-tick past' : 'timeline-tick'}
                 style={{ left: `${pctOf(i)}%` }}
               />
@@ -208,7 +212,7 @@ export function Timeline({ snapshots, index, positionRef, subscribe, onChange, c
           </div>
           <div ref={handleRef} className="timeline-handle">
             <div ref={flagRef} className="timeline-flag mono">
-              {current ? `${shortSha(current.commitOid)} · ${fmtInt(totals[index])} lines` : ''}
+              {current ? `${shortSha(current.oid)} 路 ${fmtInt(totals[index])} lines` : ''}
             </div>
           </div>
         </div>

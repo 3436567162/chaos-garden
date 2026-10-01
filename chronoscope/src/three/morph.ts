@@ -1,12 +1,11 @@
-// Snapshot → per-slot visual targets, and blending between two target sets.
+// Per-slot visual state and the blend between two such states.
 //
 // Each slot holds STRIDE floats: [height, footprint, r, g, b] in linear RGB.
-// height == 0 means "no file here at this moment".
+// height == 0 means "no file here at this moment". Target arrays are produced by
+// `History.targetsInto`; this module only owns the geometry of a slot and how
+// two states are mixed.
 
-import { Color } from 'three'
-import type { Snapshot } from '../types'
 import { CELL, type Layout } from './layout'
-import { langColor } from './palette'
 
 export const STRIDE = 5
 
@@ -32,33 +31,6 @@ export function heightFor(lines: number): number {
 export function footprintFor(lines: number): number {
   const t = Math.min(1, Math.log1p(Math.max(0, lines)) / FOOTPRINT_REF)
   return CELL * (FOOTPRINT_MIN + FOOTPRINT_SPAN * t)
-}
-
-const rgbCache = new Map<string, [number, number, number]>()
-function rgbOf(lang: string): [number, number, number] {
-  let rgb = rgbCache.get(lang)
-  if (!rgb) {
-    const c = new Color(langColor(lang))
-    rgb = [c.r, c.g, c.b]
-    rgbCache.set(lang, rgb)
-  }
-  return rgb
-}
-
-export function buildTargets(layout: Layout, snapshot: Snapshot, out: Float32Array): Float32Array {
-  out.fill(0)
-  for (const f of snapshot.files) {
-    const slot = layout.slotOf.get(f.path)
-    if (slot === undefined) continue
-    const o = slot * STRIDE
-    const rgb = rgbOf(f.isBinary ? 'Binary' : f.lang)
-    out[o] = heightFor(f.lines)
-    out[o + 1] = footprintFor(f.lines)
-    out[o + 2] = rgb[0]
-    out[o + 3] = rgb[1]
-    out[o + 4] = rgb[2]
-  }
-  return out
 }
 
 function hash01(s: string): number {

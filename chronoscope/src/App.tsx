@@ -1,43 +1,47 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CommitBar } from './components/CommitBar'
 import { Legend } from './components/Legend'
 import { BASE_STEP_MS, Playback, type Speed } from './components/Playback'
+import { StartScreen } from './components/StartScreen'
 import { Timeline } from './components/Timeline'
-import { buildMockTimeline } from './mock'
+import { History } from './history'
+import {
+  errorMessage,
+  isTauri,
+  onScanProgress,
+  pickFolder,
+  scanRepository
+} from './lib'
+import { buildMockScan } from './mock'
 import { CityScene } from './three/CityScene'
-import { computeLayout } from './three/layout'
+import type { ScanProgress } from './types'
 
 export default function App() {
-  const timeline = useMemo(buildMockTimeline, [])
-  const count = timeline.snapshots.length
-  const layout = useMemo(
-    () => computeLayout(timeline.snapshots.flatMap(s => s.files.map(f => f.path))),
-    [timeline]
-  )
-  const [index, setIndex] = useState(count - 1)
+  const [history, setHistory] = useState<History | null>(null)
+  const [progress, setProgress] = useState<ScanProgress | null>(null)
+  const [scanPath, setScanPath] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<Speed>(1)
-  const snapshot = timeline.snapshots[index]
 
   const stageRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<CityScene | null>(null)
   /**
    * The scene only exists after mount, and child effects run before parent
-   * ones — so the timeline's subscription has to be able to re-run once the
-   * scene shows up, otherwise it silently receives no frames at all.
+   * ones, so the timeline's subscription has to be able to re-run once the
+   * scene shows up.
    */
   const [scene, setScene] = useState<CityScene | null>(null)
 
   /**
-   * Playback position is a continuous coordinate in snapshot space, not a commit
-   * counter: 3.5 means "halfway between commit 3 and commit 4". Both the 3D city
-   * and the timeline playhead read from it, so a drag can park anywhere and
-   * playback can stay in motion without either one snapping.
+   * Playback position is a continuous coordinate in sample space, not a commit
+   * counter: 3.5 means "halfway between stop 3 and stop 4". Both the city and
+   * the timeline playhead read from it, so a drag can park anywhere.
    */
-  const posRef = useRef(count - 1)
-  /** Commit the 3D is heading toward; changes at most once per commit. */
-  const shownRef = useRef(count - 1)
-  /** Authoritative play state, set synchronously so the frame tick never races a click. */
+  const posRef = useRef(0)
+  const shownRef = useRef(0)
+  /** Authoritative play state, set synchronously so a frame never races a click. */
   const playingRef = useRef(false)
 
   useEffect(() => {
@@ -50,54 +54,61 @@ export default function App() {
     }
   }, [])
 
-  useEffect(() => {
-    sceneRef.current?.setLayout(layout)
-  }, [layout])
+  const count = history?.sampleCount ?? 0
+  const last = Math.max(0, count - 1)
 
   /** Draws whatever `posRef` currently points at. */
   const renderAt = useCallback(
     (pos: number, staggered: boolean) => {
-      const scene = sceneRef.current
-      const snaps = timeline.snapshots
-      if (!scene || snaps.length === 0) return
-      const lastIdx = snaps.length - 1
-      const lo = Math.min(lastIdx, Math.max(0, Math.floor(pos)))
-      const hi = Math.min(lastIdx, lo + 1)
-      scene.showAt(snaps[lo], snaps[hi], pos - lo, staggered)
+      const target = sceneRef.current
+      const h = historyRef.current
+      if (!target || !h) return
+      const clamped = Math.max(0, Math.min(lastRef.current, pos))
+      const lo = Math.min(lastRef.current, Math.floor(clamped))
+      const hi = Math.min(lastRef.current, lo + 1)
+      target.showAt(h, lo, hi, clamped - lo, staggered)
     },
-    [timeline.snapshots]
+    []
   )
 
-  // Covers first paint and layout rebuilds; scrubbing renders directly.
-  useEffect(() => {
-    if (playingRef.current) return
-    renderAt(posRef.current, false)
-  }, [renderAt, layout, index])
+  // Refs so renderAt stays stable while still seeing the current values.
+  const historyRef = useRef<History | null>(null)
+  historyRef.current = history
+  const lastRef = useRef(last)
+  lastRef.current = last
 
   useEffect(() => {
-    if (!playing || !scene) return
-    const lastIdx = count - 1
+    sceneRef.current?.setLayout(history?.layout ?? null)
+    if (history) {
+      posRef.current = last
+      shownRef.current = last
+      setIndex(last)
+      renderAt(last, false)
+    }
+  }, [history, last, renderAt])
+
+  useEffect(() => {
+    if (!playing || !scene || !history) return
     const unsub = scene.onTick(dt => {
       const pos = posRef.current + (dt / BASE_STEP_MS) * speed
       posRef.current = pos
-      if (pos >= lastIdx) {
-        posRef.current = lastIdx
+      if (pos >= lastRef.current) {
+        posRef.current = lastRef.current
         playingRef.current = false
         setPlaying(false)
       }
       renderAt(posRef.current, true)
-      const i = Math.min(lastIdx, Math.floor(posRef.current))
+      const i = Math.min(lastRef.current, Math.floor(posRef.current))
       if (i !== shownRef.current) {
         shownRef.current = i
         setIndex(i)
       }
     })
-    return () => unsub?.()
-  }, [playing, speed, count, renderAt, scene])
+    return () => unsub()
+  }, [playing, speed, scene, history, renderAt])
 
   // Stable handle so the timeline can subscribe to the render loop without
-  // resubscribing on every React render; it changes only when the scene is
-  // created or destroyed.
+  // resubscribing on every React render.
   const subscribeFrames = useCallback(
     (cb: (dt: number) => void) => (scene ? scene.onTick(cb) : () => {}),
     [scene]
@@ -109,7 +120,7 @@ export default function App() {
       setPlaying(false)
       return
     }
-    if (posRef.current >= count - 1) {
+    if (posRef.current >= lastRef.current) {
       posRef.current = 0
       shownRef.current = 0
       setIndex(0)
@@ -117,22 +128,49 @@ export default function App() {
     }
     playingRef.current = true
     setPlaying(true)
-  }, [count, renderAt])
+  }, [renderAt])
 
   /** Parks the playhead at any fractional position and stops playback. */
   const scrub = useCallback(
     (pos: number) => {
       playingRef.current = false
       setPlaying(false)
-      const clamped = Math.max(0, Math.min(count - 1, pos))
+      const clamped = Math.max(0, Math.min(lastRef.current, pos))
       posRef.current = clamped
       const i = Math.floor(clamped)
       shownRef.current = i
       setIndex(i)
       renderAt(clamped, false)
     },
-    [count, renderAt]
+    [renderAt]
   )
+
+  const openRepo = useCallback(async () => {
+    setError(null)
+    try {
+      const picked = await pickFolder()
+      if (!picked) return
+      setScanPath(picked)
+      setProgress({ phase: 'commits', done: 0, total: 0 })
+      const unlisten = await onScanProgress(setProgress)
+      try {
+        const result = await scanRepository(picked)
+        setHistory(new History(result))
+      } finally {
+        unlisten()
+      }
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setProgress(null)
+      setScanPath('')
+    }
+  }, [])
+
+  const openDemo = useCallback(() => {
+    setError(null)
+    setHistory(new History(buildMockScan()))
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -146,22 +184,58 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [togglePlay])
 
+  const showStart = !history
+
   return (
     <div className="app">
       <div className="stage-canvas" ref={stageRef} />
       <div className="vignette" />
-      <CommitBar repoName={timeline.repoName} snapshot={snapshot} index={index} count={count}>
-        <Legend snapshot={snapshot} />
-      </CommitBar>
-      <div className="stage-hint">空格 播放/暂停 · 拖拽 旋转 · 右键 平移 · 滚轮 缩放</div>
-      <Timeline
-        snapshots={timeline.snapshots}
-        index={index}
-        positionRef={posRef}
-        subscribe={subscribeFrames}
-        onChange={scrub}
-        controls={<Playback playing={playing} speed={speed} onToggle={togglePlay} onSpeed={setSpeed} />}
-      />
+      {history ? (
+        <>
+          <CommitBar
+            repoName={history.repoName}
+            sample={history.samples[index]}
+            files={history.fileCounts[index]}
+            lines={history.totals[index]}
+            index={index}
+            count={count}
+          >
+            <Legend history={history} row={index} />
+          </CommitBar>
+          <div className="stage-hint">
+            绌烘牸 鎾斁/鏆傚仠 路 鎷栨嫿 鏃嬭浆 路 鍙抽敭 骞崇Щ 路 婊氳疆 缂╂斁
+          </div>
+          <Timeline
+            samples={history.samples}
+            totals={history.totals}
+            index={index}
+            positionRef={posRef}
+            subscribe={subscribeFrames}
+            onChange={scrub}
+            controls={
+              <Playback
+                playing={playing}
+                speed={speed}
+                onToggle={togglePlay}
+                onSpeed={setSpeed}
+              />
+            }
+          />
+        </>
+      ) : null}
+      {showStart ? (
+        <StartScreen
+          progress={progress}
+          path={scanPath}
+          error={error}
+          onOpen={() => void openRepo()}
+          onDemo={openDemo}
+          onDismiss={() => setError(null)}
+        />
+      ) : null}
+      {!history && !isTauri() ? (
+        <div className="start-hint">娴忚鍣ㄩ瑙堟ā寮忥細鍙兘鏌ョ湅婕旂ず鏁版嵁</div>
+      ) : null}
     </div>
   )
 }

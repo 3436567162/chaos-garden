@@ -8,9 +8,9 @@ import {
   InstancedMesh,
   type Material
 } from 'three'
-import type { Snapshot } from '../types'
+import type { History } from '../history'
 import type { Layout } from './layout'
-import { Morph, STRIDE, buildStagger, buildTargets } from './morph'
+import { Morph, STRIDE, buildStagger } from './morph'
 
 // Degenerate scales still go through the matrix; keep them non-zero so normals stay finite.
 const EPS = 1e-4
@@ -46,9 +46,9 @@ export class BlockField {
   private readonly morph: Morph
   private readonly targetsA: Float32Array
   private readonly targetsB: Float32Array
-  /** Last snapshots baked into each target buffer, so identical commits skip the rebuild. */
-  private bakedA: Snapshot | null = null
-  private bakedB: Snapshot | null = null
+  /** Sample rows last baked into each buffer, so a repeat row costs nothing. */
+  private bakedA = -1
+  private bakedB = -1
 
   constructor(layout: Layout, material: Material) {
     this.layout = layout
@@ -72,18 +72,18 @@ export class BlockField {
   }
 
   /**
-   * Renders the exact fractional position between two snapshots. Target buffers
-   * are rebuilt only when the snapshot identity changes, so a per-frame call
-   * during playback costs one blend plus one instance upload.
+   * Renders the exact fractional position between two sample rows. Target
+   * buffers are rebuilt only when the row changes, so a playback frame costs one
+   * blend plus one instance upload.
    */
-  showAt(from: Snapshot, to: Snapshot, fraction: number, staggered: boolean): void {
-    if (from !== this.bakedA) {
-      buildTargets(this.layout, from, this.targetsA)
-      this.bakedA = from
+  showAt(history: History, lo: number, hi: number, fraction: number, staggered: boolean): void {
+    if (lo !== this.bakedA) {
+      history.targetsInto(lo, this.targetsA)
+      this.bakedA = lo
     }
-    if (to !== this.bakedB) {
-      buildTargets(this.layout, to, this.targetsB)
-      this.bakedB = to
+    if (hi !== this.bakedB) {
+      history.targetsInto(hi, this.targetsB)
+      this.bakedB = hi
     }
     this.morph.blend(this.targetsA, this.targetsB, fraction, staggered)
     this.write()

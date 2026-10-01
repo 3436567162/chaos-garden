@@ -140,7 +140,7 @@ python -m http.server 8000     # ES Module 需经 HTTP 打开，file:// 会被 C
 
 把任意 Git 仓库变成一座**可以拖着时间轴看它长大的 3D 城市**：每个文件一栋楼，高度是行数、颜色是语言、位置由路径决定且整个历史中不跳变。拖动或自动播放时间轴，看项目从几个文件长成今天的样子。完全离线，不发任何网络请求。
 
-> 分阶段交付中：Phase 0（假数据驱动的城市、时间轴、自动播放）已完成，真实 `git2` 扫描器是下一步。
+> 分阶段交付中：Phase 0（3D 城市、时间轴、自动播放）与 Phase 1（真实 `git2` 扫描器）已完成，启动后选一个本地 Git 仓库即可。
 
 <details>
 <summary><b>技术栈</b></summary>
@@ -151,7 +151,7 @@ python -m http.server 8000     # ES Module 需经 HTTP 打开，file:// 会被 C
 | 前端 | React 18 + TypeScript + Vite 6 |
 | 3D | three 0.186：单个 InstancedMesh、OrbitControls、UnrealBloom |
 | 图表 | 时间轴面积图 Canvas 手绘 |
-| Git / 缓存（Phase 1） | `git2` 读本地 `.git` · JSON 文件缓存 |
+| Git / 缓存 | `git2` 读本地 `.git` · JSON 文件缓存（blob OID 去重） |
 
 </details>
 
@@ -197,6 +197,7 @@ npm run tauri build    # 构建当前平台安装包
 | house_game | **Claude Opus 5.5** | 全部产出：场景架构、程序化几何、着色器、交互系统、模块拆分 |
 | chronoscope | **Claude Fable 5** | 主体产出：工程脚手架、稳定布局算法、InstancedMesh 渲染、视觉设计、时间轴与自动播放 |
 | chronoscope | **space bunny** | 动效重构：连续播放时钟、径向错峰与速度连续缓动、时间轴命令式渲染、任意位置停靠 |
+| chronoscope | **space bunny** | 真实扫描器：`git2` 遍历与抽样、blob 去重缓存、增量 diff、仓库选择与进度界面 |
 
 <details>
 <summary><b>分工说明</b></summary>
@@ -205,7 +206,7 @@ npm run tauri build    # 构建当前平台安装包
 
 禅庭场景（`house_game`）由 **Claude Opus 5.5** 独立完成，涵盖砂纹高度图算法、破面屋顶曲面、龙的脊线扫掠、四季环境插值与积雪 shader patch 等全部实现。
 
-代码城市（`chronoscope`）的骨架与渲染由 **Claude Fable 5** 完成，涵盖 Tauri 工程搭建、路径到网格的稳定布局、单 InstancedMesh 渲染与暮色主题视觉。随后由 **space bunny** 重构了动效层：把播放位置从整数 commit 索引改成连续坐标，重写 Morph 为外部时钟驱动的混合而非内部补间，并让时间轴改为命令式渲染，从而支持涟漪式错峰过渡和任意位置停靠。
+代码城市（`chronoscope`）的骨架与渲染由 **Claude Fable 5** 完成，涵盖 Tauri 工程搭建、路径到网格的稳定布局、单 InstancedMesh 渲染与暮色主题视觉。随后由 **space bunny** 重构了动效层（把播放位置从整数 commit 索引改成连续坐标，Morph 改为外部时钟驱动，时间轴改为命令式渲染），并实现 Phase 1 的真实扫描器：用 blob OID 做去重缓存把冷扫描压到 47.6ms / 热扫描 2.0ms，线上只传增量、由前端重放进定型数组。
 
 </details>
 

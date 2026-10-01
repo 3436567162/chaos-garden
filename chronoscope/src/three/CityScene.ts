@@ -27,7 +27,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
-import type { Snapshot } from '../types'
+import type { History } from '../history'
 import { BlockField } from './BlockField'
 import { CELL, type Layout } from './layout'
 import {
@@ -256,10 +256,23 @@ export class CityScene {
     }
   }
 
-  setLayout(layout: Layout): void {
+  setLayout(layout: Layout | null): void {
     if (this.field) {
       this.scene.remove(this.field.mesh)
       this.field.dispose()
+      this.field = null
+    }
+    // No repository loaded yet: keep the ground, drop the city.
+    if (!layout) {
+      for (const old of [this.grid, this.outline]) {
+        if (!old) continue
+        this.scene.remove(old)
+        old.geometry.dispose()
+        ;(old.material as LineBasicMaterial).dispose()
+      }
+      this.grid = null
+      this.outline = null
+      return
     }
     this.field = new BlockField(layout, this.blockMaterial)
     this.scene.add(this.field.mesh)
@@ -297,9 +310,9 @@ export class CityScene {
     this.frame(radius)
   }
 
-  /** Renders the exact fractional position between two snapshots. */
-showAt(from: Snapshot, to: Snapshot, fraction: number, staggered: boolean): void {
-    this.field?.showAt(from, to, fraction, staggered)
+  /** Renders the exact fractional position between two sample rows. */
+showAt(history: History, lo: number, hi: number, fraction: number, staggered: boolean): void {
+    this.field?.showAt(history, lo, hi, fraction, staggered)
   }
 
   private frame(radius: number): void {
