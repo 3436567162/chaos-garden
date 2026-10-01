@@ -645,3 +645,77 @@ body {
   color: var(--faint);
   white-space: nowrap;
 }
+
+/* ---------- Phase 3: stats overlay ---------- */
+.stats-overlay {
+  position: fixed;
+  top: 132px;
+  left: 18px;
+  z-index: 26;
+  min-width: 168px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  pointer-events: none;
+}
+
+.stats-title {
+  margin-bottom: 7px;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-overlay dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  margin: 0;
+  font-size: 10.5px;
+}
+
+.stats-overlay dl > div { display: contents; }
+.stats-overlay dt { color: var(--faint); }
+.stats-overlay dd { margin: 0; color: var(--text); text-align: right; }
+.stats-overlay dd.warn { color: #ff9a9a; }
+
+/* The legend sits under the stats overlay in the left column, so nudge it. */
+.app:has(.stats-overlay) .legend { margin-top: 128px; }
+
+/* ---------- Phase 3: focus and motion ---------- */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-primary:focus-visible,
+.btn-ghost:focus-visible {
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start-progress .bar i:only-child { animation: none; width: 100%; opacity: 0.4; }
+  .btn-primary, .btn-ghost { transition: none; }
+  .start { backdrop-filter: none; }
+  .glass { backdrop-filter: none; }
+}
+
+/* ---------- Phase 3: small screens ---------- */
+@media (max-width: 1180px) {
+  .filepanel { width: 290px; }
+  .stats-overlay { top: 118px; }
+}
+
+@media (max-width: 980px) {
+  .filepanel {
+    top: auto;
+    left: 18px;
+    right: 18px;
+    bottom: 128px;
+    width: auto;
+    max-height: 46vh;
+  }
+  .stats-overlay { display: none; }
+}

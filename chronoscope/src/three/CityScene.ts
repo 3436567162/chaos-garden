@@ -52,11 +52,70 @@ const CLICK_SLOP = 5
 /** Cursor travel, in CSS pixels, below which a hover is not worth re-emitting. */
 const HOVER_SLOP = 8
 
+/**
+ * Half the grid's line count per axis. 16 * half^2 segments, so 96 is about
+ * 147k segments: dense enough to read as a ground plane, cheap enough that it
+ * never dominates the frame.
+ */
+const GRID_HALF_LINES = 96
+
 /** A block the pointer is over. `slot` indexes the layout and the mesh. */
 export interface Pick {
   slot: number
   clientX: number
   clientY: number
+}
+
+/** One frame's worth of render statistics. */
+export interface FrameStats {
+  /** Smoothed frames per second. */
+  fps: number
+  /** Smoothed frame time in milliseconds, i.e. 1000 / fps. */
+  frameMs: number
+  /** Longest frame in the current sampling window. */
+  worstMs: number
+  drawCalls: number
+  triangles: number
+  programs: number
+  /** Blocks in the instanced mesh, i.e. the city size. */
+  instances: number
+}
+
+/**
+ * Frame times are noisy, so everything is an exponential moving average. The
+ * worst frame in the window is kept because that is what a stutter actually is.
+ */
+const STATS_WINDOW_MS = 1000
+
+class Stats {
+  private lastAt = 0
+  private worst = 0
+  private frames = 0
+  private accumulated = 0
+  fps = 0
+  frameMs = 0
+  worstMs = 0
+
+  sample(now: number): void {
+    if (this.lastAt === 0) {
+      this.lastAt = now
+      return
+    }
+    const dt = now - this.lastAt
+    this.lastAt = now
+    this.accumulated += dt
+    this.frames += 1
+    if (dt > this.worst) this.worst = dt
+
+    if (this.accumulated >= STATS_WINDOW_MS) {
+      this.fps = (this.frames * 1000) / this.accumulated
+      this.frameMs = this.accumulated / this.frames
+      this.worstMs = this.worst
+      this.accumulated = 0
+      this.frames = 0
+      this.worst = 0
+    }
+  }
 }
 
 function backdropTexture(): CanvasTexture {
@@ -100,12 +159,12 @@ function radialTexture(inner: string, outer: string): CanvasTexture {
 }
 
 /** Grid lines whose brightness fades with distance from the centre. */
-function fadingGrid(radius: number, step: number): LineSegments {
+function fadingGrid(radius: number, step: number, half: number): LineSegments {
   const pos: number[] = []
   const col: number[] = []
   const major = new Color(GRID_MAJOR)
   const minor = new Color(GRID_MINOR)
-  const n = Math.ceil(radius / step)
+  const n = half
   const push = (x: number, z: number, c: Color) => {
     const f = Math.max(0, 1 - Math.hypot(x, z) / radius) ** 1.6
     pos.push(x, 0, z)
@@ -155,7 +214,8 @@ export class CityScene {
   private readonly camera = new PerspectiveCamera(FOV, 1, 0.1, 4000)
   private readonly controls: OrbitControls
   private readonly composer: EffectComposer
-  private readonly bloom: UnrealBloomPass
+  private bloom: UnrealBloomPass | null = null
+  private bloomDisabled = false
   private readonly blockMaterial = new MeshStandardMaterial({
     color: 0xffffff,
     vertexColors: true,
@@ -184,6 +244,8 @@ export class CityScene {
   private readonly clickCbs = new Set<(pick: Pick) => void>()
   /** Kept so dispose can detach them. */
   private readonly detachPointer: Array<() => void> = []
+  private readonly stats = new Stats()
+  private readonly statsCbs = new Set<(s: FrameStats) => void>()
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
@@ -191,8 +253,12 @@ export class CityScene {
     this.renderer.outputColorSpace = SRGBColorSpace
     this.renderer.toneMapping = NeutralToneMapping
     this.renderer.toneMappingExposure = 1.1
-    this.renderer.shadowMap.enabled = true
+this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = PCFShadowMap
+    // EffectComposer issues several render() calls per frame and info resets on
+    // each one, which would leave the overlay reporting only the final blit.
+    // Manual reset makes the counters cover the whole frame.
+    this.renderer.info.autoReset = false
     container.appendChild(this.renderer.domElement)
 
     this.scene.background = backdropTexture()
@@ -250,8 +316,15 @@ export class CityScene {
 
     this.composer = new EffectComposer(this.renderer)
     this.composer.addPass(new RenderPass(this.scene, this.camera))
-    this.bloom = new UnrealBloomPass(new Vector2(1, 1), 0.55, 0.6, 0.72)
-    this.composer.addPass(this.bloom)
+    // Bloom is a fixed per-frame cost that does not shrink with the city, which
+    // makes it the first thing to drop when profiling on a weak GPU. Off in
+    // stress runs with VITE_CHRONOSCOPE_NO_BLOOM=1.
+    this.bloomDisabled = (import.meta as { env?: Record<string, string> }).env
+      ?.VITE_CHRONOSCOPE_NO_BLOOM === '1'
+    if (!this.bloomDisabled) {
+        this.bloom = new UnrealBloomPass(new Vector2(1, 1), 0.55, 0.6, 0.72)
+      this.composer.addPass(this.bloom)
+    }
     this.composer.addPass(new OutputPass())
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
@@ -261,15 +334,39 @@ export class CityScene {
 
     const loop = (now: number) => {
       this.raf = requestAnimationFrame(loop)
-      const dt = Math.min(64, now - this.lastNow)
+const dt = Math.min(64, now - this.lastNow)
       this.lastNow = now
       for (const cb of this.ticks) cb(dt)
       this.pick()
       this.controls.update()
+      this.renderer.info.reset()
       this.composer.render()
+      this.stats.sample(now)
+      // Published once a frame, after the composer has finished its passes.
+      if (this.statsCbs.size > 0) {
+        const info = this.renderer.info
+        const snapshot: FrameStats = {
+          fps: this.stats.fps,
+          frameMs: this.stats.frameMs,
+          worstMs: this.stats.worstMs,
+          drawCalls: info.render.calls,
+          triangles: info.render.triangles,
+          programs: info.programs?.length ?? 0,
+          instances: this.field?.mesh.count ?? 0
+        }
+        for (const cb of this.statsCbs) cb(snapshot)
+      }
     }
     this.lastNow = performance.now()
     this.raf = requestAnimationFrame(loop)
+  }
+
+  /** Fires once per frame with render statistics. */
+  onStats(cb: (s: FrameStats) => void): () => void {
+    this.statsCbs.add(cb)
+    return () => {
+      this.statsCbs.delete(cb)
+    }
   }
 
   /**
@@ -422,7 +519,14 @@ export class CityScene {
       old.geometry.dispose()
       ;(old.material as LineBasicMaterial).dispose()
     }
-    this.grid = fadingGrid(radius * 3, CELL * 2)
+    // The grid is split per cell so the radial fade is smooth along each line,
+    // which makes its vertex count grow with the square of the city. Half-steps
+    // are pinned instead of derived from the cell size, so a 100k-block city
+    // costs the same handful of lines as a small one.
+    const gridRadius = radius * 3
+    const gridHalf = GRID_HALF_LINES
+    const gridStep = gridRadius / gridHalf
+    this.grid = fadingGrid(gridRadius, gridStep, gridHalf)
     this.grid.position.y = -0.01
     this.outline = lotOutline(halfW, halfD)
     this.outline.position.y = -0.005
@@ -492,7 +596,7 @@ showAt(history: History, lo: number, hi: number, fraction: number, staggered: bo
     }
     ;(this.scene.background as CanvasTexture).dispose()
     this.blockMaterial.dispose()
-    this.bloom.dispose()
+    this.bloom?.dispose()
     this.composer.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()

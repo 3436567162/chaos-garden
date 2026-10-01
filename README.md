@@ -164,7 +164,8 @@ python -m http.server 8000     # ES Module 需经 HTTP 打开，file:// 会被 C
 - **真实仓库**：`git2` 离线读 `.git`，blob OID 去重缓存，线上只传增量
 - **自动播放**：`空格` 播放 / 暂停，`0.5×`–`4×` 调速，拖动时间轴自动暂停
 - **交互**：悬停看文件、点击看修改史、`/` 搜索提交、`←` `→` 逐 commit、载入时生长入场
-- **规划中**：大规模方块的帧率实测、`git bisect` 可视化、逐 commit 搜索
+- **实测帧率**：10 万方块 73.8 fps / 13.55 ms 帧耗时，draw calls 恒为 21
+- **规划中**：`git bisect` 可视化、逐 commit 搜索、`diff_tree_to_tree` 扫描优化
 
 </details>
 
@@ -198,7 +199,7 @@ npm run tauri build    # 构建当前平台安装包
 | ContributorRank | **GLM-5.3** | 算法设计：多平台数据聚合、身份归并、归一化加权评分模型 |
 | house_game | **Claude Opus 5.5** | 全部产出：场景架构、程序化几何、着色器、交互系统、模块拆分 |
 | chronoscope | **Claude Fable 5** | 主体产出：工程脚手架、稳定布局算法、InstancedMesh 渲染、视觉设计、时间轴与自动播放 |
-| chronoscope | **space bunny** | 动效重构（连续播放时钟、径向错峰与速度连续缓动、时间轴命令式渲染、任意位置停靠）、真实扫描器（`git2` 遍历与抽样、blob 去重缓存、增量 diff、仓库选择与进度界面）与交互层（射线拾取、悬停 tooltip、文件修改史、提交搜索、键盘步进、入场生长动画） |
+| chronoscope | **space bunny** | 动效重构（连续播放时钟、径向错峰与速度连续缓动、时间轴命令式渲染、任意位置停靠）、真实扫描器（`git2` 遍历与抽样、blob 去重缓存、增量 diff、仓库选择与进度界面）、交互层（射线拾取、悬停 tooltip、文件修改史、提交搜索、键盘步进、入场生长动画）与性能打磨（合成压测、帧统计、地面网格密度修正） |
 
 <details>
 <summary><b>分工说明</b></summary>

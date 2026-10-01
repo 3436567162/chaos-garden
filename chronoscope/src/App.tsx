@@ -1,22 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CommitBar } from './components/CommitBar'
 import { FilePanel } from './components/FilePanel'
 import { Legend } from './components/Legend'
-import { BASE_STEP_MS, Playback, type Speed } from './components/Playback'
+import { Playback, BASE_STEP_MS, type Speed } from './components/Playback'
 import { SearchBox } from './components/SearchBox'
 import { StartScreen } from './components/StartScreen'
+import { Stats } from './components/Stats'
 import { Timeline } from './components/Timeline'
 import { Tooltip } from './components/Tooltip'
 import { History } from './history'
-import { errorMessage, isTauri, onScanProgress, pickFolder, scanRepository } from './lib'
+import {
+  errorMessage,
+  isTauri,
+  onScanProgress,
+  pickFolder,
+  scanRepository,
+  writeBenchLog
+} from './lib'
 import { buildMockScan } from './mock'
-import { CityScene, type Pick } from './three/CityScene'
+import { makeStressScan, stressSlotsFromEnv } from './stress'
+import { CityScene, type FrameStats, type Pick } from './three/CityScene'
 import type { ScanProgress } from './types'
 
 /** How long the entrance sweep takes when a repository first appears. */
 const ENTRANCE_MS = 1500
 
+/** Stops generated in stress mode; fewer keeps the state grid's memory sane. */
+const STRESS_SAMPLES = 120
+
 export default function App() {
+  /** Non-zero when VITE_CHRONOSCOPE_STRESS asks for a synthetic city. */
+  const stressSlots = useMemo(stressSlotsFromEnv, [])
   const [history, setHistory] = useState<History | null>(null)
   const [progress, setProgress] = useState<ScanProgress | null>(null)
   const [scanPath, setScanPath] = useState('')
@@ -26,6 +40,12 @@ export default function App() {
   const [speed, setSpeed] = useState<Speed>(1)
   const [hover, setHover] = useState<Pick | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
+  const [showStats, setShowStats] = useState(stressSlots > 0)
+
+  // Stress mode skips the start screen entirely: there is nothing to pick.
+  useEffect(() => {
+    if (stressSlots > 0) setHistory(new History(makeStressScan(stressSlots, STRESS_SAMPLES)))
+  }, [stressSlots])
 
   const stageRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<CityScene | null>(null)
@@ -149,6 +169,30 @@ export default function App() {
     }
   }, [scene])
 
+  // Stable handle for the stats overlay, which subscribes on its own.
+  const subscribeStats = useCallback(
+    (cb: (s: FrameStats) => void) => (scene ? scene.onStats(cb) : () => {}),
+    [scene]
+  )
+
+  // Benchmark mode: one line per second so a stress run can be read back from
+  // the dev log instead of scraped off the screen.
+  useEffect(() => {
+    if (!scene || stressSlots <= 0) return
+    let last = 0
+    return scene.onStats(s => {
+      if (s.fps <= 0) return
+      const now = performance.now()
+      if (now - last < 1000) return
+last = now
+      writeBenchLog(
+        `blocks=${s.instances} fps=${s.fps.toFixed(1)} ` +
+          `frame=${s.frameMs.toFixed(2)}ms worst=${s.worstMs.toFixed(1)}ms ` +
+          `draws=${s.drawCalls} tris=${s.triangles} progs=${s.programs}`
+      )
+    })
+  }, [scene, stressSlots])
+
   // Stable handle so the timeline can subscribe to the render loop without
   // resubscribing on every React render.
   const subscribeFrames = useCallback(
@@ -232,6 +276,8 @@ export default function App() {
         goTo(lastRef.current)
       } else if (e.key === 'Escape') {
         setSelected(null)
+      } else if (e.key === '`') {
+        setShowStats(v => !v)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -269,7 +315,17 @@ export default function App() {
     <div className="app">
       <div className="stage-canvas" ref={stageRef} />
       <div className="vignette" />
-      {history ? (
+      {history && history.slots === 0 ? (
+        <StartScreen
+          progress={null}
+          path=""
+          error={`${history.repoName} 里没有可显示的文件：所有被跟踪的文件都落在被忽略的目录里。`}
+          onOpen={() => void openRepo()}
+          onDemo={openDemo}
+          onDismiss={() => setError(null)}
+        />
+      ) : null}
+      {history && history.slots > 0 ? (
         <>
           <CommitBar
             repoName={history.repoName}
@@ -314,6 +370,12 @@ export default function App() {
             }
           />
           <Tooltip history={history} row={index} pick={hover} />
+          {showStats ? (
+            <Stats
+              subscribe={subscribeStats}
+              label={stressSlots > 0 ? `压力测试 · ${history.repoName}` : history.repoName}
+            />
+          ) : null}
         </>
       ) : null}
       {!history ? (

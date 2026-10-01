@@ -37,3 +37,11 @@ export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
 }
+
+/**
+ * Appends a line to the app's `bench.log`. Only registered in debug builds, so
+ * calling it in a release app rejects; the caller ignores that.
+ */
+export function writeBenchLog(line: string): void {
+  void invoke('write_bench_log', { line }).catch(() => {})
+}

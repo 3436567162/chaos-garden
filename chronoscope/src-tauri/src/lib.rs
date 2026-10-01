@@ -124,6 +124,13 @@ let mut blobs = scan::BlobTable::new();
     }
     let samples = built.samples;
     let paths = scan::paths_of(&samples);
+    if paths.is_empty() {
+        return Err(ScanError(format!(
+            "{repo_name} has no files left after ignore rules. \
+             Everything tracked sits in an ignored directory such as \
+             node_modules, target or dist."
+        )));
+    }
 
     // The wire cost is dominated by how much churn sits between two distant
     // sampled commits, which the file count cannot predict. Check it for real
@@ -198,12 +205,43 @@ fn emit(app: &AppHandle, phase: &str, done: usize, total: usize) {
     );
 }
 
+/// Appends a line to `bench.log` in the app data directory.
+///
+/// A benchmark's numbers live in the WebView, whose `console.log` never reaches
+/// the terminal that launched it, so this is the only way to read a stress run
+/// back. Release builds compile the body out and keep the command as a no-op,
+/// so the handler list does not change shape between build profiles.
+#[tauri::command]
+fn write_bench_log(app: AppHandle, line: String) {
+    #[cfg(debug_assertions)]
+    {
+        use std::io::Write;
+        let Some(dir) = tauri::Manager::path(&app).app_data_dir().ok() else {
+            return;
+        };
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("bench.log"))
+        {
+            let _ = writeln!(file, "{line}");
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (app, line);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Running::default())
-        .invoke_handler(tauri::generate_handler![scan_repository])
+        .invoke_handler(tauri::generate_handler![scan_repository, write_bench_log])
         .run(tauri::generate_context!())
         .expect("error while running chronoscope");
 }
