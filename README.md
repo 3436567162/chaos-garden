@@ -11,6 +11,7 @@
 | [ContributorRank](#contributorrank) | 跨平台开源贡献度分析桌面应用，透明加权评分 | Tauri 2.8 · Rust · React 18 · TypeScript | `npm install && npm run tauri dev` |
 | [house_game · 禅庭](#house_game--禅庭) | 可走进去的日式枯山水庭院，全程序化生成 | Three.js 0.170 · GLSL · WebAudio | `python -m http.server 8000` |
 | [chronoscope](#chronoscope) | Git 仓库时间旅行：拖动时间轴看代码城市生长 | Tauri 2.12 · Rust · React 18 · Three.js 0.186 | `npm install && npm run tauri dev` |
+| [redquill](#redquill) | LLM 驱动的越狱探测：双通道判定 + 防御建议 | Tauri 2.12 · Rust · React 18 · Three.js 0.186 | `npm install && npm run tauri dev` |
 
 <details>
 <summary><b>目录结构</b></summary>
@@ -19,7 +20,8 @@
 chaos-garden/
 ├─ ContributorRank/        # 开源贡献度分析桌面应用（Tauri + Rust + React）
 ├─ house_game/             # 禅庭 · Three.js 枯山水互动场景（零构建，无依赖安装）
-└─ chronoscope/            # Git 代码考古 · 3D 城市时间轴（Tauri + React + Three.js）
+├─ chronoscope/            # Git 代码考古 · 3D 城市时间轴（Tauri + React + Three.js）
+└─ redquill/               # LLM 越狱探测 · 双通道判定 + 防御建议（Tauri + Rust + React + Three.js）
 ```
 
 </details>
@@ -187,6 +189,52 @@ npm run tauri build    # 构建当前平台安装包
 
 ---
 
+<a id="redquill"></a>
+
+## redquill
+
+一个 **LLM 驱动的越狱探测工具**：16 个攻击族模板库 + 12 个变异算子的遗传搜索，判定层是**双通道**的（启发式 + N 票判定模型），输出带置信度的结论和**按严重度排序的防御建议**。只针对你自己拥有或已获授权测试的端点。
+
+它的立场是「判定层才是主体」：现成工具的结论要么来自一条关键词正则，要么来自单次 LLM 调用，两者都给你一个不可复现的 bool。redquill 输出标签 + 置信度 + 通道一致度 + 投票一致度，**两个通道矛盾时标记为分歧而不是取平均**，并且每条记录都保存完整对话与原始响应，报告里的每条发现都能一键复制成手工复现脚本。
+
+<details>
+<summary><b>技术栈</b></summary>
+
+| 层 | 选型 |
+| --- | --- |
+| 桌面 | Tauri 2.12 |
+| 后端 | Rust · `reqwest`（rustls）· `tokio` |
+| 前端 | React 18 + TypeScript + Vite 6 |
+| 3D | Three.js 0.186（无 OrbitControls，手写轨道控制） |
+| 持久化 | 每运行一份 JSON（无数据库） |
+
+</details>
+
+<details>
+<summary><b>三个设计决定</b></summary>
+
+- **二进制里不含载荷语料**：攻击库只提供策略框架，实际被测行为由运行时填入并代入模板，因此适用于任何策略边界，也不用等工具更新就能测新模型。
+- **适应度里「不确定」拿 0 而非负分**：惩罚不确定会让进化朝「判定模型读不懂的探测」优化——那是在优化判定噪声。`disputed` 额外 ×0.5，因为它只是线索。
+- **每一代都留裸请求基线**：没有基线就无法区分「包装有效」和「本来就能过」，而这个区分决定报告里最严重那条发现是否成立。
+
+</details>
+
+<details>
+<summary><b>能力</b></summary>
+
+- **双通道判定**：启发式通道（离线、确定性、列出命中标记）＋ N 票判定模型通道（明确 rubric、每票带理由），融合出置信度
+- **遗传搜索**：精英保留 + 锦标赛选择 + 算子交叉，按家族+算子组合的新颖度给奖励，固定种子可完整复现
+- **3D 攻击树**：半径 = 代数，扇区 = 攻击族，柱高 = 适应度；「某个扇区里一簇高红柱」是最可操作的形状，表格视图会把它藏起来
+- **防御报告**：每条发现指名机理 + 给出部署层修改，并列出证据 probe id；还覆盖输出侧规避编码、判定通道分歧、样本量不足这三类容易被忽略的问题
+- **LLM 改写器**（可选）：让模型改写高分离子，加速突破
+- **历史**：每次运行落一份完整 JSON，保留最近 200 条
+
+</details>
+
+92 个 Rust 单测覆盖判定融合、启发式分类、算子合法性、进化确定性与报告生成，全部离线可跑。详见 [`redquill/README.md`](redquill/README.md)。
+
+---
+
 <a id="使用的-ai"></a>
 
 ## 使用的 AI
@@ -200,6 +248,7 @@ npm run tauri build    # 构建当前平台安装包
 | house_game | **Claude Opus 5.5** | 全部产出：场景架构、程序化几何、着色器、交互系统、模块拆分 |
 | chronoscope | **Claude Fable 5** | 主体产出：工程脚手架、稳定布局算法、InstancedMesh 渲染、视觉设计、时间轴与自动播放 |
 | chronoscope | **space bunny** | 动效重构（连续播放时钟、径向错峰与速度连续缓动、时间轴命令式渲染、任意位置停靠）、真实扫描器（`git2` 遍历与抽样、blob 去重缓存、增量 diff、仓库选择与进度界面）、交互层（射线拾取、悬停 tooltip、文件修改史、提交搜索、键盘步进、入场生长动画）、性能打磨（合成压测、帧统计、地面网格密度修正）与二分查找（`git bisect` 中点算法、阈值自动查找、嫌疑文件高亮） |
+| redquill | **space bunny** | 全部产出：攻击族模板库（载荷与策略框架分离的设计）、变异算子与合法性过滤、双通道判定融合规则、遗传进化循环、并发扫描编排、防御报告推导、3D 攻击树、UI 与交互 |
 
 <details>
 <summary><b>分工说明</b></summary>
@@ -209,6 +258,8 @@ npm run tauri build    # 构建当前平台安装包
 禅庭场景（`house_game`）由 **Claude Opus 5.5** 独立完成，涵盖砂纹高度图算法、破面屋顶曲面、龙的脊线扫掠、四季环境插值与积雪 shader patch 等全部实现。
 
 代码城市（`chronoscope`）的骨架与渲染由 **Claude Fable 5** 完成，涵盖 Tauri 工程搭建、路径到网格的稳定布局、单 InstancedMesh 渲染与暮色主题视觉。随后由 **space bunny** 重构了动效层（把播放位置从整数 commit 索引改成连续坐标，Morph 改为外部时钟驱动，时间轴改为命令式渲染），并实现 Phase 1 的真实扫描器：用 blob OID 做去重缓存把冷扫描压到 47.6ms / 热扫描 2.0ms，线上只传增量、由前端重放进定型数组。
+
+越狱探测工具（`redquill`）由 **space bunny** 独立完成。核心判断是把差异化放在判定层而非攻击语料层：攻击模板是公开红队策略，真正稀缺的是「判定结果能不能复现」。因此该项目的重心是双通道融合规则、分歧不隐藏的置信度模型、以及每条发现都能回放到原始对话的可复现工件机制。
 
 </details>
 
