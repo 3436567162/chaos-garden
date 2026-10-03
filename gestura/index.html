@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>手迹 · gestura</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0d12'/%3E%3Cpath d='M8 22 Q16 6 24 22' stroke='%236fd3ff' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
+<script type="importmap">
+{
+  "imports": {
+    "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
+  }
+}
+</script>
+<style>
+  :root {
+    --ink: #0a0d12;
+    --paper: rgba(12, 16, 24, 0.82);
+    --line: rgba(150, 190, 255, 0.16);
+    --fg: #e8eef7;
+    --dim: rgba(232, 238, 247, 0.55);
+    --accent: #6fd3ff;
+    --warn: #ffb454;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink);
+    color: var(--fg);
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  canvas { display: block; }
+  #stage { position: fixed; inset: 0; }
+
+  #camera { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; top: -10px; left: -10px; }
+
+  #preview { position: fixed; right: 16px; bottom: 16px; width: 224px; border-radius: 8px;
+    overflow: hidden; border: 1px solid var(--line); background: #05070b;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .6); transition: opacity .25s, transform .25s; }
+  #preview.hidden { opacity: 0; transform: translateY(8px) scale(.96); pointer-events: none; }
+  #preview canvas { width: 100%; display: block; }
+  #preview .cap { padding: 5px 8px; font-size: 11px; letter-spacing: 1px; color: var(--dim);
+    display: flex; justify-content: space-between; border-top: 1px solid var(--line); }
+  /* Diagnostics live inside the preview on purpose: it is the panel the user is
+     already looking at, so the state of the detection path is never somewhere
+     else on screen. */
+  #preview .diag { padding: 4px 8px 6px; font-size: 10px; line-height: 1.55;
+    color: var(--dim); border-top: 1px solid var(--line);
+    font-variant-numeric: tabular-nums; white-space: pre-line; }
+  #preview .diag b { color: var(--fg); font-weight: 500; }
+  #preview .diag.bad { color: #ff9d9d; }
+  #preview .copydiag { width: 100%; padding: 5px; font: inherit; font-size: 10px;
+    letter-spacing: 2px; color: var(--dim); background: transparent; cursor: pointer;
+    border: 0; border-top: 1px solid var(--line); border-radius: 0;
+    font-family: "Noto Sans SC", "PingFang SC", system-ui, sans-serif; }
+  #preview .copydiag:hover { background: rgba(255,255,255,.06); color: var(--fg); }
+
+  #hud { position: fixed; top: 16px; left: 16px; min-width: 208px; padding: 12px 14px;
+    background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+    backdrop-filter: blur(10px); font-size: 12px; line-height: 1.75;
+    font-variant-numeric: tabular-nums; user-select: none; }
+  #hud h1 { margin: 0 0 8px; font-size: 17px; letter-spacing: 5px; font-weight: 600; }
+  #hud .row { display: flex; justify-content: space-between; gap: 18px; color: var(--dim); }
+  #hud .row b { color: var(--fg); font-weight: 500; }
+  #hud .meter { margin-top: 8px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
+  #hud .meter i { display: block; height: 100%; width: 0%; background: var(--accent);
+    transition: width .1s linear; }
+  #hud hr { border: 0; border-top: 1px solid var(--line); margin: 9px 0; }
+
+  #toolbar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px;
+    display: flex; gap: 6px; padding: 7px; background: var(--paper);
+    border: 1px solid var(--line); border-radius: 9px; backdrop-filter: blur(10px); }
+  #toolbar button { font: inherit; font-size: 13px; padding: 7px 11px; min-width: 40px;
+    border: 1px solid transparent; background: transparent; color: var(--dim);
+    border-radius: 6px; cursor: pointer; transition: .14s; }
+  #toolbar button:hover { background: rgba(255, 255, 255, .07); color: var(--fg); }
+  #toolbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #toolbar button[aria-pressed="true"] { background: var(--accent); color: #04121a; font-weight: 600; }
+  #toolbar .sep { width: 1px; background: var(--line); margin: 4px 3px; }
+
+  #keys { position: fixed; left: 16px; bottom: 18px; padding: 10px 12px; font-size: 11px;
+    color: var(--dim); background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; line-height: 1.9; backdrop-filter: blur(10px); user-select: none; }
+  #keys kbd { display: inline-block; min-width: 17px; padding: 1px 4px; text-align: center;
+    font: inherit; font-size: 10px; color: var(--fg); background: rgba(255,255,255,.08);
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; margin-right: 5px; }
+  #keys .hint { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line);
+    color: rgba(255,180,84,.7); }
+
+  #gate { position: fixed; inset: 0; display: grid; place-items: center; z-index: 20;
+    background: radial-gradient(120% 100% at 50% 0%, #131b28 0%, #070a0f 70%);
+    transition: opacity .6s; text-align: center; padding: 24px; }
+  #gate.gone { opacity: 0; pointer-events: none; }
+  #gate .card { max-width: 460px; }
+  #gate h2 { margin: 0 0 6px; font-size: 34px; letter-spacing: 14px; font-weight: 300; }
+  #gate .sub { color: var(--dim); font-size: 12px; letter-spacing: 4px; margin-bottom: 26px; }
+  #gate p { color: var(--dim); font-size: 13px; line-height: 1.9; margin: 0 0 22px; }
+  #gate .acts { display: flex; gap: 10px; justify-content: center; }
+  #gate button { font: inherit; font-size: 14px; padding: 11px 26px; border-radius: 8px;
+    cursor: pointer; border: 1px solid var(--line); background: rgba(255,255,255,.05);
+    color: var(--fg); transition: .16s; }
+  #gate button:hover { background: rgba(255,255,255,.1); }
+  #gate button:disabled { opacity: .7; cursor: progress; }
+  #gate button.primary { background: var(--accent); border-color: var(--accent); color: #04121a; font-weight: 600; }
+  #gate button:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+  #gate .note { margin-top: 20px; font-size: 11px; color: rgba(255,180,84,.75); }
+  #gate .err { margin-top: 18px; font-size: 12px; color: #ff8080; line-height: 1.8; white-space: pre-line; }
+
+  @media (max-width: 760px) {
+    #keys { display: none; }
+    #hud { min-width: 0; font-size: 11px; padding: 9px 11px; }
+    #preview { width: 148px; }
+    #toolbar { flex-wrap: wrap; justify-content: center; width: calc(100% - 24px); bottom: 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="ink"></canvas></div>
+<video id="camera" playsinline muted autoplay></video>
+
+<aside id="hud" role="region" aria-label="状态">
+  <h1>手 迹</h1>
+  <div class="row"><span>推理</span><b id="m-fps">—</b></div>
+  <div class="row"><span>渲染</span><b id="m-res">—</b></div>
+  <div class="row"><span>后端</span><b id="m-gpu">—</b></div>
+  <div class="row"><span>摄像头</span><b id="m-cam">—</b></div>
+  <div class="row"><span>检测帧</span><b id="m-camfps">—</b></div>
+  <div class="row"><span>手</span><b id="m-hands">0</b></div>
+  <div class="row"><span>笔速</span><b id="m-speed">0</b></div>
+  <div class="row"><span>笔宽</span><b id="m-width">0</b></div>
+  <div class="meter"><i id="m-bar"></i></div>
+  <hr />
+  <div class="row"><span>落墨</span><b id="m-press">—</b></div>
+  <div class="row" id="m-hint-row" hidden><span></span><b id="m-hint"></b></div>
+  <div class="row"><span>干湿</span><b id="m-dry">0</b></div>
+  <div class="row"><span>墨滴</span><b id="m-drops">0</b></div>
+  <div class="row"><span>笔性</span><b id="m-nib">丝绢</b></div>
+  <div class="row"><span>定桩</span><b id="m-stakes">0</b></div>
+  <div class="row"><span>手势</span><b id="m-hold">—</b></div>
+  <div class="meter"><i id="m-hold-bar"></i></div>
+  <hr />
+  <div class="row"><span>双手场</span><b id="m-field">无场</b></div>
+</aside>
+
+<div id="preview" class="hidden">
+  <canvas id="pv" width="224" height="126"></canvas>
+  <div class="cap"><span>骨架</span><span id="pv-state">—</span></div>
+  <div class="diag" id="pv-diag">—</div>
+  <button id="btn-copydiag" class="copydiag" type="button">复制诊断</button>
+</div>
+
+<div id="toolbar" role="toolbar" aria-label="笔性">
+  <button data-nib="silk" aria-pressed="true">丝绢</button>
+  <button data-nib="flying" aria-pressed="false">飞白</button>
+  <button data-nib="splash" aria-pressed="false">泼墨</button>
+  <button data-nib="rubbing" aria-pressed="false">拓印</button>
+  <div class="sep"></div>
+  <button data-field="off" aria-pressed="true">无场</button>
+  <button data-field="mirror" aria-pressed="false">镜像</button>
+  <button data-field="attract" aria-pressed="false">吸引</button>
+  <button data-field="repel" aria-pressed="false">排斥</button>
+  <div class="sep"></div>
+  <button id="btn-preview" aria-pressed="false">骨架</button>
+  <button id="btn-clear">清空</button>
+  <button id="btn-save">导出</button>
+</div>
+
+<div id="keys">
+  <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> 切换笔性 <kbd>V</kbd> 切场</div>
+  <div><kbd>P</kbd> 骨架窗 <kbd>C</kbd> 清空 <kbd>S</kbd> 导出 PNG</div>
+  <div><kbd>F</kbd> 满屏画布 <kbd>H</kbd> 隐藏面板 <kbd>G</kbd> 切换 CPU/GPU</div>
+  <div>食指伸出落墨 · 蜷起抬笔 · 拇指指向定桩（其余四指蜷起）</div>
+  <div class="hint">飞白要快、拓印要慢、泼墨甩手</div>
+</div>
+
+<div id="gate">
+  <div class="card">
+    <h2>手 迹</h2>
+    <div class="sub">GESTURA · 手即笔</div>
+    <p>摄像头追踪 21 个手部关键点。<b style="color:var(--accent)">食指伸出即落墨</b>，蜷起抬笔;<br />
+       移动手画线，慢则粗快则细；手张得越开笔画越饱满。<br />
+       其余四指蜷起、拇指指向一个方位并停住，原地长出结构。</p>
+    <div class="acts">
+      <button id="gate-start" class="primary">开启摄像头</button>
+    </div>
+    <div class="note">画面只在本机处理,不上传、不录制、不落盘(除你主动导出)。</div>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

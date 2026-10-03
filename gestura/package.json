@@ -1,0 +1,13 @@
+{
+  "name": "gestura-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/ink.test.mjs && node test/pose.test.mjs && node test/phase2.test.mjs && node test/hands.test.mjs && node test/smoothing.test.mjs",
+    "test:ink": "node test/ink.test.mjs",
+    "test:pose": "node test/pose.test.mjs",
+    "test:phase2": "node test/phase2.test.mjs",
+    "test:hands": "node test/hands.test.mjs",
+    "test:smoothing": "node test/smoothing.test.mjs"
+  }
+}
